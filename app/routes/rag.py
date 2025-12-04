@@ -47,7 +47,39 @@ async def upload(files: List[UploadFile] = File(...)):
 @router.post("/ask", response_model=AskResponse)
 def ask(req: AskRequest):
     k = req.top_k or DEFAULT_TOP_K
-    rag = build_rag_chain(k=k)
+    use_enhanced = (
+        req.use_enhanced_retrieval if req.use_enhanced_retrieval is not None else True
+    )
+    rag = build_rag_chain(k=k, use_enhanced_retrieval=use_enhanced)
     result = rag(req.question)
     return AskResponse(**result)
 
+
+@router.delete("/reset")
+def reset_collection(collection_name: str = "legal-texts"):
+    """Reset/delete a ChromaDB collection (useful for fixing corruption)."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        import chromadb
+        from app.core.config import PERSIST_DIRECTORY
+
+        client = chromadb.PersistentClient(path=PERSIST_DIRECTORY)
+        try:
+            client.delete_collection(collection_name)
+            logger.info(f"Deleted collection: {collection_name}")
+            return {
+                "status": "success",
+                "message": f"Collection '{collection_name}' deleted successfully",
+            }
+        except Exception as e:
+            logger.warning(f"Could not delete collection: {e}")
+            return {
+                "status": "error",
+                "message": f"Collection '{collection_name}' may not exist: {e}",
+            }
+    except Exception as e:
+        logger.error(f"Error resetting collection: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to reset collection: {e}")

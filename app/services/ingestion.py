@@ -83,7 +83,55 @@ def _find_legal_units(text: str) -> List[Tuple[int, int, str, str]]:
     return ranges
 
 
+def _detect_document_type(source: str, text: str) -> str:
+    """Detect document type from filename and content."""
+    source_lower = source.lower()
+    text_lower = text[:500].lower()  # Check first 500 chars
+
+    if "قانون" in source_lower or "law" in source_lower:
+        return "law"
+    if (
+        "آیین‌نامه" in source_lower
+        or "regulation" in source_lower
+        or "آیین نامه" in source_lower
+    ):
+        return "regulation"
+    if "رای" in source_lower or "ruling" in source_lower or "حکم" in source_lower:
+        return "ruling"
+    if "قانون" in text_lower:
+        return "law"
+    if "آیین‌نامه" in text_lower or "آیین نامه" in text_lower:
+        return "regulation"
+    return "document"
+
+
+def _detect_legal_domain(text: str) -> str:
+    """Detect legal domain from content."""
+    text_lower = text[:1000].lower()  # Check first 1000 chars
+
+    domain_keywords = {
+        "criminal": ["جرم", "مجازات", "کیفری", "زندان", "حبس"],
+        "civil": ["حقوق مدنی", "عقد", "قرارداد", "ارث", "وصیت"],
+        "family": ["خانواده", "ازدواج", "طلاق", "نفقه", "حضانت"],
+        "commercial": ["تجاری", "شرکت", "سهامی", "چک", "برات"],
+    }
+
+    scores = {}
+    for domain, keywords in domain_keywords.items():
+        score = sum(1 for kw in keywords if kw in text_lower)
+        if score > 0:
+            scores[domain] = score
+
+    if scores:
+        return max(scores.items(), key=lambda x: x[1])[0]
+    return "unknown"
+
+
 def _legal_chunk_documents(text: str, source: str) -> List[Document]:
+    """Chunk legal documents with enhanced metadata."""
+    document_type = _detect_document_type(source, text)
+    legal_domain = _detect_legal_domain(text)
+
     units = _find_legal_units(text)
     documents: List[Document] = []
     if units:
@@ -96,6 +144,8 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
                     page_content=content,
                     metadata={
                         "source": source,
+                        "document_type": document_type,
+                        "legal_domain": legal_domain,
                         "unit_kind": kind,
                         "unit_title": title,
                         "unit_index": idx,
@@ -112,7 +162,17 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
         separators=separators,
         add_start_index=True,
     )
-    return splitter.create_documents([text], metadatas=[{"source": source}])
+    docs = splitter.create_documents(
+        [text],
+        metadatas=[
+            {
+                "source": source,
+                "document_type": document_type,
+                "legal_domain": legal_domain,
+            }
+        ],
+    )
+    return docs
 
 
 def chunk_text(text: str, source: str) -> List[Document]:

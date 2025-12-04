@@ -28,3 +28,4 @@ def generate_otp_secret():
 
 if __name__ == "__main__":
     generate_otp_secret()
+``

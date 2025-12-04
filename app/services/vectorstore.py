@@ -27,10 +27,44 @@ def add_documents(
 ) -> int:
     if not documents:
         return 0
-    vs = get_vectorstore(collection_name)
-    vs.add_documents(documents)
-    vs.persist()
-    return len(documents)
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        vs = get_vectorstore(collection_name)
+        vs.add_documents(documents)
+        vs.persist()
+        return len(documents)
+    except (TypeError, ValueError, AttributeError) as e:
+        # Handle ChromaDB corruption: delete and recreate collection
+        logger.warning(
+            f"ChromaDB error during add_documents: {e}. "
+            "Attempting to reset collection."
+        )
+
+        # Delete the corrupted collection
+        try:
+            import chromadb
+
+            client = chromadb.PersistentClient(path=PERSIST_DIRECTORY)
+            try:
+                client.delete_collection(collection_name)
+                logger.info(f"Deleted corrupted collection: {collection_name}")
+            except Exception as del_err:
+                logger.warning(f"Could not delete collection: {del_err}")
+        except Exception as client_err:
+            logger.warning(f"Could not create ChromaDB client: {client_err}")
+
+        # Recreate vectorstore and try again
+        vs = get_vectorstore(collection_name)
+        vs.add_documents(documents)
+        vs.persist()
+        logger.info(
+            f"Successfully recreated collection and added {len(documents)} documents"
+        )
+        return len(documents)
 
 
 def stats(collection_name: str = "legal-texts") -> dict:

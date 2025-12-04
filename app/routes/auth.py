@@ -1,7 +1,11 @@
+from uuid import uuid4
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, Base, engine
+from app.core.config import ACCESS_TOKEN_EXPIRE_MINUTES
 from app.schemas.auth import (
     TokenResponse,
     SendOtpRequest,
@@ -30,39 +34,56 @@ Base.metadata.create_all(bind=engine)
 @router.post("/login")
 def login_start(payload: SendOtpRequest):
     # Login is OTP-based: send code
-    code = generate_otp(payload.phone)
-    send_sms_mock(payload.phone, f"کد ورود شما: {code}")
+    code = generate_otp(payload.mobile)
+    send_sms_mock(payload.mobile, f"کد ورود شما: {code}")
     return {"sent": {code}}
 
 
 @router.post("/otp/send")
 def otp_send(payload: SendOtpRequest):
-    code = generate_otp(payload.phone)
+    code = generate_otp(payload.mobile)
     # TODO: integrate real SMS provider; for now mock
-    send_sms_mock(payload.phone, f"کد ورود شما: {code}")
+    send_sms_mock(payload.mobile, f"کد ورود شما: {code}")
     return {"sent": {code}}
 
 
 @router.post("/otp/verify", response_model=TokenResponse)
 def otp_verify(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
-    ok = verify_otp(payload.phone, payload.code)
+    ok = verify_otp(payload.mobile, payload.code)
     if not ok:
         raise HTTPException(status_code=400, detail="کد وارد شده صحیح نیست")
 
-    user = db.query(User).filter(User.phone == payload.phone).first()
+    user = db.query(User).filter(User.mobile == payload.mobile).first()
     if not user:
-        # Create minimal user with phone as username placeholder
-        # Ensure unique username; fallback to phone-based username
-        base_username = f"user_{payload.phone.strip('+')}"
+        # Create minimal user with mobile as username placeholder
+        # Ensure unique username; fallback to mobile-based username
+        base_username = f"user_{payload.mobile.strip('+')}"
         username = base_username
         suffix = 1
         while db.query(User).filter(User.username == username).first() is not None:
             suffix += 1
             username = f"{base_username}_{suffix}"
-        user = create_user(db, username=username, phone=payload.phone)
+        user = create_user(db, username=username, mobile=payload.mobile)
 
-    token = create_access_token(subject=str(user.username))
-    return TokenResponse(access_token=token)
+    # Build session and token with aligned expiry
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    session_id = str(uuid4())
+
+    access_token = create_access_token(
+        subject=str(user.username),
+        expires_delta=expire - now,
+        session_id=session_id,
+        user_name=user.username,
+        full_name=user.username,  # تا وقتی فیلد جداگانه‌ای برای نام کامل نداریم
+        pic="",  # می‌توانید بعداً از فیلد تصویر کاربر پرش کنید
+    )
+
+    return TokenResponse(
+        accessToken=access_token,
+        sessionId=session_id,
+        sessionExpiry=int(expire.timestamp()),
+    )
 
 
 @router.put("/me")

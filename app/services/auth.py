@@ -14,11 +14,38 @@ from app.models.user import User
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
-def create_access_token(subject: str, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    subject: str,
+    expires_delta: Optional[timedelta] = None,
+    session_id: Optional[str] = None,
+    user_name: Optional[str] = None,
+    full_name: Optional[str] = None,
+    pic: Optional[str] = None,
+) -> str:
+    """
+    Create an access JWT.
+
+    The payload is aligned with the frontend `JWT` interface:
+      export interface JWT {
+          userName: string;
+          fullName: string;
+          pic: string;
+          exp: number;
+      }
+    """
     expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    to_encode = {"sub": subject, "exp": expire}
+    to_encode: dict[str, object] = {
+        "sub": subject,
+        "exp": int(expire.timestamp()),
+        "type": "access",
+        "userName": user_name or subject,
+        "fullName": full_name or subject,
+        "pic": pic or "",
+    }
+    if session_id is not None:
+        to_encode["sid"] = session_id
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -27,9 +54,12 @@ def get_user_by_username(db: Session, username: str) -> Optional[User]:
 
 
 def create_user(
-    db: Session, username: str, email: Optional[str] = None, phone: Optional[str] = None
+    db: Session,
+    username: str,
+    email: Optional[str] = None,
+    mobile: Optional[str] = None,
 ) -> User:
-    user = User(username=username, email=email, phone=phone)
+    user = User(username=username, email=email, mobile=mobile)
     db.add(user)
     db.commit()
     db.refresh(user)
