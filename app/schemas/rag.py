@@ -2,9 +2,17 @@ from pydantic import BaseModel, Field
 from typing import List, Optional
 
 
+class FolderPathRequest(BaseModel):
+    """درخواست برای پردازش فولدر از مسیر محلی سرور"""
+
+    folder_path: str = Field(..., description="مسیر فولدر حاوی فایل‌های Word")
+    recursive: bool = Field(True, description="آیا در زیرفولدرها هم جستجو شود")
+
+
 class AskRequest(BaseModel):
     question: str = Field(..., description="Persian legal question")
     top_k: Optional[int] = Field(5, description="Number of chunks to retrieve")
+    conversation_id: Optional[int] = Field(None, description="Conversation ID")
     use_enhanced_retrieval: Optional[bool] = Field(
         True, description="Use domain-aware retrieval"
     )
@@ -19,3 +27,18 @@ class AskResponse(BaseModel):
     domain: Optional[str] = None
     domain_label: Optional[str] = None
     domain_confidence: Optional[float] = None
+
+
+class SourceInfo(BaseModel):
+    """اطلاعات یک فایل ذخیره شده"""
+
+    source: str
+    chunk_count: int
+
+
+class StoredSourcesResponse(BaseModel):
+    """پاسخ برای لیست فایل‌های ذخیره شده"""
+
+    total_files: int
+    total_chunks: int
+    sources: List[SourceInfo]

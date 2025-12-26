@@ -1,6 +1,6 @@
 import os
 import logging
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -84,6 +84,8 @@ logging.basicConfig(level=logging.INFO)
 _log_db_connection_details(SQLALCHEMY_DATABASE_URL)
 
 # Create engine with connection pooling
+# Ensure UTF-8 encoding for Persian/Farsi text support
+# Add client_encoding=UTF8 to connection options to properly handle Persian text
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     poolclass=QueuePool,
@@ -99,9 +101,36 @@ engine = create_engine(
         "keepalives_interval": 30,
         "keepalives_count": 10,
         "application_name": "airport_bot",
-        "options": "-c statement_timeout=30000",
+        "options": "-c statement_timeout=30000 -c client_encoding=UTF8",
     },
 )
+
+
+# Event listener to ensure UTF-8 encoding on each connection
+# This is a backup measure - the options parameter should handle it, but this ensures it
+@event.listens_for(engine, "connect")
+def set_utf8_encoding(dbapi_conn, connection_record):
+    """Ensure UTF-8 encoding is set for each database connection."""
+    try:
+        # Execute SET client_encoding = 'UTF8' for each new connection
+        # This ensures Persian/Farsi text is properly handled
+        # Works with both psycopg2 and psycopg3
+        if hasattr(dbapi_conn, "cursor"):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("SET client_encoding = 'UTF8'")
+            cursor.close()
+            if hasattr(dbapi_conn, "commit"):
+                dbapi_conn.commit()
+            elif hasattr(dbapi_conn, "autocommit"):
+                # psycopg3 might use autocommit differently
+                pass
+    except Exception as e:
+        # Don't fail the connection if encoding setting fails
+        # The options parameter should handle it anyway
+        logging.debug(
+            f"Could not set UTF-8 encoding via event listener (may be handled by options): {e}"
+        )
+
 
 # Session and Base classes
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

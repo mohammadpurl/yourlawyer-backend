@@ -103,6 +103,17 @@ def classify_question(question: str) -> tuple[LegalDomain, float]:
     Returns:
         Tuple of (domain, confidence_score)
     """
+    # Check cache first
+    try:
+        from app.core.cache import get_cached_classification, cache_classification
+
+        cached = get_cached_classification(question)
+        if cached:
+            domain = LegalDomain(cached["domain"])
+            return domain, cached["confidence"]
+    except Exception:
+        pass  # Fall through to normal classification
+
     question_lower = question.lower()
     scores: dict[LegalDomain, float] = {}
 
@@ -119,10 +130,20 @@ def classify_question(question: str) -> tuple[LegalDomain, float]:
             scores[domain] = score / len(keywords)
 
     if not scores:
-        return LegalDomain.UNKNOWN, 0.0
+        result = (LegalDomain.UNKNOWN, 0.0)
+    else:
+        best_domain = max(scores.items(), key=lambda x: x[1])
+        result = (best_domain[0], best_domain[1])
 
-    best_domain = max(scores.items(), key=lambda x: x[1])
-    return best_domain[0], best_domain[1]
+    # Cache the result
+    try:
+        from app.core.cache import cache_classification
+
+        cache_classification(question, result[0].value, result[1], ttl=3600)
+    except Exception:
+        pass  # Cache failure shouldn't break classification
+
+    return result
 
 
 def get_domain_label(domain: LegalDomain) -> str:

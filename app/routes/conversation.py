@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -9,12 +9,14 @@ from app.models.user import User, Conversation, Message
 from app.schemas.conversation import (
     ConversationSummary,
     ConversationDetail,
+    CreateConversationRequest,
     ChatRequest,
     ChatResponse,
 )
 from app.schemas.rag import AskResponse
 from app.services.auth import get_current_user
 from app.services.rag import build_rag_chain
+from app.services.memory import create_memory_from_messages
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -39,13 +41,14 @@ def list_conversations(
 
 @router.post("/", response_model=ConversationSummary)
 def create_conversation(
+    payload: CreateConversationRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     ایجاد یک گفتگو‌ی جدید خالی برای کاربر.
     """
-    conv = Conversation(user_id=current_user.id, title=None)
+    conv = Conversation(user_id=current_user.id, title=payload.title)
     db.add(conv)
     db.commit()
     db.refresh(conv)
@@ -86,6 +89,18 @@ def ask_in_conversation(
     ارسال یک سوال در دل یک گفتگو؛ سوال و پاسخ به صورت پیام ذخیره می‌شوند
     و تاریخچه گفتگو به همراه سوال جدید به زنجیره RAG ارسال می‌شود.
     """
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "Conversation /ask received",
+        extra={
+            "conversation_id": conversation_id,
+            "top_k": payload.top_k,
+            "use_enhanced": payload.use_enhanced_retrieval,
+            "question_preview": (payload.question or "")[:200],
+        },
+    )
     conv = (
         db.query(Conversation)
         .filter(
@@ -97,59 +112,58 @@ def ask_in_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail="گفتگو پیدا نشد")
 
-    # ذخیره پیام کاربر
+    # ذخیره پیام کاربر در دیتابیس (با conversation_id)
     user_msg = Message(
-        conversation_id=conv.id,
+        conversation_id=conv.id,  # ذخیره با conversation_id مربوط به این گفتگو
         user_id=current_user.id,
         role="user",
         content=payload.question,
     )
     db.add(user_msg)
     db.commit()
+    db.refresh(user_msg)
 
-    # خواندن آخرین تاریخچه (مثلاً همه پیام‌ها؛ در صورت نیاز می‌توان محدود کرد)
-    history_messages: List[Message] = (
+    # خواندن تاریخچه گفتگو از دیتابیس (بدون سوال جدید که تازه اضافه کردیم)
+    previous_messages: List[Message] = (
         db.query(Message)
-        .filter(Message.conversation_id == conv.id)
+        .filter(
+            Message.conversation_id == conv.id,
+            Message.id != user_msg.id,  # سوال جدید را حذف می‌کنیم
+        )
         .order_by(Message.created_at.asc())
         .all()
     )
 
-    history_text_parts: List[str] = []
-    for m in history_messages:
-        prefix = "کاربر:" if m.role == "user" else "دستیار:"
-        history_text_parts.append(f"{prefix} {m.content}")
-    history_text = "\n\n".join(history_text_parts)
+    # ایجاد memory از تاریخچه قبلی (بدون سوال جدید)
+    # سوال جدید بعداً در human message اضافه می‌شود
+    memory = create_memory_from_messages(previous_messages)
 
-    # ساخت زنجیره RAG
+    # ساخت زنجیره RAG با memory
     k = payload.top_k or DEFAULT_TOP_K
     use_enhanced = (
         payload.use_enhanced_retrieval
         if payload.use_enhanced_retrieval is not None
         else True
     )
-    rag = build_rag_chain(k=k, use_enhanced_retrieval=use_enhanced)
+    rag = build_rag_chain(k=k, use_enhanced_retrieval=use_enhanced, memory=memory)
 
-    # ارسال سوال به همراه کانتکست گفتگو
-    full_question = (
-        f"تاریخچه گفتگو بین کاربر و دستیار:\n{history_text}\n\n"
-        f"سوال جدید کاربر:\n{payload.question}"
-    )
-    result: AskResponse | dict = rag(full_question)  # type: ignore[assignment]
+    # ارسال سوال (memory به صورت خودکار history + سوال جدید را به مدل می‌فرستد)
+    result: AskResponse | dict = rag(payload.question)  # type: ignore[assignment]
 
     # خروجی ممکن است دیکشنری ساده (fallback) یا پاسخ با فیلدهای بیشتر باشد
-    answer = result.get("answer")  # type: ignore[union-attr]
+    answer = result.get("answer") or ""  # type: ignore[union-attr]
     sources = result.get("sources", [])  # type: ignore[union-attr]
 
-    # ذخیره پاسخ دستیار
+    # ذخیره پاسخ دستیار (حتماً با conversation_id ذخیره می‌شود)
     assistant_msg = Message(
-        conversation_id=conv.id,
+        conversation_id=conv.id,  # ذخیره با conversation_id
         user_id=current_user.id,
         role="assistant",
-        content=answer,
+        content=answer or "پاسخی دریافت نشد",  # جلوگیری از None
     )
     db.add(assistant_msg)
     db.commit()
+    db.refresh(assistant_msg)
 
     return ChatResponse(
         conversation_id=conv.id,

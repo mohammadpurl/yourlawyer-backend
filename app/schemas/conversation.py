@@ -27,6 +27,10 @@ class ConversationDetail(ConversationSummary):
     messages: List[MessageResponse] = []
 
 
+class CreateConversationRequest(BaseModel):
+    title: Optional[str] = None
+
+
 class ChatRequest(BaseModel):
     question: str
     top_k: Optional[int] = None

@@ -2,16 +2,36 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from sqlalchemy.orm import Session
+import logging
 
 from app.core.database import get_db
 from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.models.user import User
 
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+# استفاده از HTTPBearer برای پشتیبانی از Bearer Token در Swagger
+security = HTTPBearer()
+
+
+def get_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+    """استخراج توکن از header Authorization"""
+    logger = logging.getLogger("app.auth")
+    token_preview = (
+        credentials.credentials[:10] + "..."
+        if credentials and credentials.credentials
+        else None
+    )
+    logger.info(
+        "Authorization header received",
+        extra={
+            "scheme": credentials.scheme if credentials else None,
+            "token_preview": token_preview,
+        },
+    )
+    return credentials.credentials
 
 
 def create_access_token(
@@ -67,12 +87,15 @@ def create_user(
 
 
 def get_current_user(
-    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+    token: str = Depends(get_token), db: Session = Depends(get_db)
 ) -> User:
     credentials_error = HTTPException(
         status_code=401, detail="Could not validate credentials"
     )
     try:
+        print("token isssssssssss", token)
+        print(SECRET_KEY)
+        print(ALGORITHM)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str | None = payload.get("sub")
         if username is None:
