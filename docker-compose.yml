@@ -85,6 +85,9 @@ services:
       # Rate Limiting
       RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      
+      # Root path for reverse proxy (e.g., /backend)
+      ROOT_PATH: ${ROOT_PATH:-}
     volumes:
       # Persistent storage برای ChromaDB
       - chroma_data:/app/storage/chroma

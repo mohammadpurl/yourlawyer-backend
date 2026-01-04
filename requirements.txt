@@ -7,12 +7,13 @@ psycopg[binary]==3.2.3
 # LangChain & ecosystem
 langchain==0.3.27
 langchain-community==0.3.29
-langchain-core==0.3.79
+langchain-core>=0.3.75,<1.0.0
 langchain-text-splitters==0.3.10
 langchain-huggingface==0.3.1
 langchain-openai==0.3.32
+langchain-chroma==0.2.6
 openai==1.102.0
-chromadb==0.5.5
+chromadb>=1.0.20
 sentence-transformers==5.1.2
 
 # Document loaders
@@ -22,6 +23,7 @@ python-docx==1.2.0
 # Utils
 tqdm==4.67.1
 SQLAlchemy==2.0.36
+urllib3>=2.5.0,<3.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 email-validator==2.2.0

@@ -23,7 +23,7 @@ def get_embeddings() -> HuggingFaceEmbeddings:
     try:
         # تنظیم timeout برای Hugging Face Hub (اگر قبلاً تنظیم نشده)
         os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(HF_TIMEOUT))
-        
+
         embeddings = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL,
             encode_kwargs={"normalize_embeddings": True},

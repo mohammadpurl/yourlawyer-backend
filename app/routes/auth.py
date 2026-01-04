@@ -17,7 +17,7 @@ from app.services.auth import (
     create_access_token,
     get_current_user,
 )
-from app.services.otp import generate_otp, verify_otp, send_sms_mock
+from app.services.otp import generate_otp, verify_otp, send_sms_mock, send_sms_real
 from app.models.user import User
 
 
@@ -35,15 +35,14 @@ Base.metadata.create_all(bind=engine)
 def login_start(payload: SendOtpRequest):
     # Login is OTP-based: send code
     code = generate_otp(payload.mobile)
-    send_sms_mock(payload.mobile, f"کد ورود شما: {code}")
+    send_sms_real(payload.mobile, code)
     return {"sent": {code}}
 
 
 @router.post("/otp/send")
 def otp_send(payload: SendOtpRequest):
     code = generate_otp(payload.mobile)
-    # TODO: integrate real SMS provider; for now mock
-    send_sms_mock(payload.mobile, f"کد ورود شما: {code}")
+    send_sms_real(payload.mobile, code)
     return {"sent": {code}}
 
 

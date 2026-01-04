@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,10 +23,16 @@ init_sentry()
 
 logger = logging.getLogger("app.main")
 
+# Get root_path from environment variable for reverse proxy support
+# This is needed when FastAPI is behind a reverse proxy (e.g., nginx) with a subpath
+ROOT_PATH = os.getenv("ROOT_PATH", "").strip()
+root_path_value = ROOT_PATH if ROOT_PATH else None
+
 app = FastAPI(
     title="YourLawyer RAG (IR)",
     description="API برای سیستم دستیار حقوقی با RAG و پشتیبانی از گفتگوها",
     version="1.0.0",
+    root_path=root_path_value,
 )
 
 
