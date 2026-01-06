@@ -33,6 +33,7 @@ app = FastAPI(
     description="API برای سیستم دستیار حقوقی با RAG و پشتیبانی از گفتگوها",
     version="1.0.0",
     root_path=root_path_value,
+    root_path_in_servers=True,  # اضافه کردن root_path به servers در OpenAPI schema
 )
 
 
@@ -140,7 +141,7 @@ def on_startup() -> None:
     Base.metadata.create_all(bind=engine)
     logger.info("Startup completed: database tables ensured")
 
-    # تنظیم Swagger UI برای پشتیبانی از Bearer Token
+    # تنظیم Swagger UI برای پشتیبانی از Bearer Token و root_path
     from fastapi.openapi.utils import get_openapi
 
     def custom_openapi():
@@ -163,6 +164,24 @@ def on_startup() -> None:
                 "description": "توکن را از endpoint `/auth/otp/verify` دریافت کنید. ابتدا با شماره موبایل و OTP لاگین کنید، سپس `accessToken` را در اینجا وارد کنید.",
             }
         }
+
+        # اضافه کردن servers برای پشتیبانی از root_path
+        if root_path_value:
+            # اگر root_path تنظیم شده، آن را به servers اضافه می‌کنیم
+            openapi_schema["servers"] = [
+                {
+                    "url": root_path_value,
+                    "description": "Production server with root path",
+                }
+            ]
+        else:
+            # اگر root_path تنظیم نشده، از root استفاده می‌کنیم
+            openapi_schema["servers"] = [
+                {
+                    "url": "/",
+                    "description": "Default server",
+                }
+            ]
 
         app.openapi_schema = openapi_schema
         return app.openapi_schema
