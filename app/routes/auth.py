@@ -42,12 +42,15 @@ def login_start(payload: SendOtpRequest):
 @router.post("/otp/send")
 def otp_send(payload: SendOtpRequest):
     code = generate_otp(payload.mobile)
+    print("code sentttttttttt:", code)
     send_sms_real(payload.mobile, code)
     return {"sent": {code}}
 
 
 @router.post("/otp/verify", response_model=TokenResponse)
 def otp_verify(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
+    print("code isssssssssss:", payload.code)
+    print(payload.mobile, payload.code)
     ok = verify_otp(payload.mobile, payload.code)
     if not ok:
         raise HTTPException(status_code=400, detail="کد وارد شده صحیح نیست")

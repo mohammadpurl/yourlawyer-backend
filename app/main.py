@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from app.routes.auth import router as auth_router
 from app.routes.rag import router as rag_router
 from app.routes.conversation import router as conversation_router
+from app.routes.plan import router as plan_router
 from app.core.database import Base, engine
 from app.core.logging import configure_logging
 from app.core.monitoring import init_sentry
@@ -96,6 +97,7 @@ def health():
 app.include_router(auth_router)
 app.include_router(rag_router)
 app.include_router(conversation_router)
+app.include_router(plan_router)
 
 
 @app.exception_handler(HTTPException)

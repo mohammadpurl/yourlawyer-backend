@@ -1,9 +1,24 @@
-from datetime import datetime
+from datetime import datetime, date
 
-from sqlalchemy import String, Integer, ForeignKey, DateTime, Text
+from sqlalchemy import (
+    String,
+    Integer,
+    ForeignKey,
+    DateTime,
+    Text,
+    Date,
+    Enum as SQLEnum,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+import enum
 
 from app.core.database import Base
+
+
+class PlanType(str, enum.Enum):
+    FREE = "free"
+    SILVER = "silver"
+    GOLD = "gold"
 
 
 class User(Base):
@@ -18,6 +33,19 @@ class User(Base):
     )
     mobile: Mapped[str | None] = mapped_column(
         String(20), unique=True, nullable=True, index=True
+    )
+
+    # Plan fields
+    plan_type: Mapped[PlanType] = mapped_column(
+        SQLEnum(PlanType),
+        default=PlanType.FREE,
+        nullable=False,
+        index=True,
+        server_default="free",  # مقدار پیش‌فرض در دیتابیس
+    )
+    questions_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    plan_reset_date: Mapped[date | None] = mapped_column(
+        Date, nullable=True, index=True
     )
 
     # Relationships

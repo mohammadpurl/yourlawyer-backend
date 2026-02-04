@@ -17,6 +17,7 @@ from app.schemas.rag import AskResponse
 from app.services.auth import get_current_user
 from app.services.rag import build_rag_chain
 from app.services.memory import create_memory_from_messages
+from app.services.plan import check_user_can_ask_question, increment_user_question_count
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -112,6 +113,11 @@ def ask_in_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail="گفتگو پیدا نشد")
 
+    # بررسی محدودیت پلن کاربر
+    can_ask, error_message = check_user_can_ask_question(current_user, db)
+    if not can_ask:
+        raise HTTPException(status_code=403, detail=error_message)
+
     # ذخیره پیام کاربر در دیتابیس (با conversation_id)
     user_msg = Message(
         conversation_id=conv.id,  # ذخیره با conversation_id مربوط به این گفتگو
@@ -149,6 +155,9 @@ def ask_in_conversation(
 
     # ارسال سوال (memory به صورت خودکار history + سوال جدید را به مدل می‌فرستد)
     result: AskResponse | dict = rag(payload.question)  # type: ignore[assignment]
+
+    # افزایش تعداد سوالات استفاده شده توسط کاربر
+    increment_user_question_count(current_user, db)
 
     # خروجی ممکن است دیکشنری ساده (fallback) یا پاسخ با فیلدهای بیشتر باشد
     answer = result.get("answer") or ""  # type: ignore[union-attr]

@@ -14,6 +14,16 @@ from pydantic import BaseModel
 from app.core.config import UPLOAD_DIRECTORY, DEFAULT_TOP_K, BASE_DIR
 from app.core.security import encrypt_bytes, is_encryption_enabled
 from app.core.rate_limit import limiter, get_rate_limit_string
+from app.core.security_utils import (
+    sanitize_filename,
+    validate_file_extension,
+    validate_file_content,
+    validate_path,
+    safe_extract_zip,
+    validate_upload_file,
+    check_file_size,
+    secure_path_join,
+)
 from app.services.memory import create_memory_from_messages
 from fastapi import Request
 from app.services.ingestion import ingest_files
@@ -24,6 +34,7 @@ from app.services.folder_ingestion import (
 )
 from app.services.vectorstore import add_documents, stats, get_stored_sources
 from app.services.rag import build_rag_chain
+from app.services.plan import check_user_can_ask_question, increment_user_question_count
 from app.schemas.rag import (
     AskRequest,
     AskResponse,
@@ -289,6 +300,11 @@ async def ask(
         },
     )
 
+    # بررسی محدودیت پلن کاربر
+    can_ask, error_message = check_user_can_ask_question(current_user, db)
+    if not can_ask:
+        raise HTTPException(status_code=403, detail=error_message)
+
     k = req.top_k or DEFAULT_TOP_K
     conversation_id = req.conversation_id
     conversation = None
@@ -353,6 +369,9 @@ async def ask(
         # اطمینان از وجود فیلدهای مورد نیاز
         result.setdefault("answer", "")
         result.setdefault("sources", [])
+
+        # افزایش تعداد سوالات استفاده شده توسط کاربر
+        increment_user_question_count(current_user, db)
 
         # ذخیره خودکار پاسخ دستیار اگر conversation_id وجود داشته باشد
         if conversation_id and conversation:

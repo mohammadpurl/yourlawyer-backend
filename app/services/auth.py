@@ -9,7 +9,8 @@ import logging
 
 from app.core.database import get_db
 from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
-from app.models.user import User
+from app.models.user import User, PlanType
+from datetime import date
 
 
 # استفاده از HTTPBearer برای پشتیبانی از Bearer Token در Swagger
@@ -79,7 +80,21 @@ def create_user(
     email: Optional[str] = None,
     mobile: Optional[str] = None,
 ) -> User:
-    user = User(username=username, email=email, mobile=mobile)
+    # تنظیم پلن پیش‌فرض (رایگان) و تاریخ ریست
+    today = date.today()
+    if today.month == 12:
+        reset_date = date(today.year + 1, 1, 1)
+    else:
+        reset_date = date(today.year, today.month + 1, 1)
+
+    user = User(
+        username=username,
+        email=email,
+        mobile=mobile,
+        plan_type=PlanType.FREE,
+        questions_used=0,
+        plan_reset_date=reset_date,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
