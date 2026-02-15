@@ -12,7 +12,12 @@ from app.routes.plan import router as plan_router
 from app.core.database import Base, engine
 from app.core.logging import configure_logging
 from app.core.monitoring import init_sentry
-from app.core.config import ALLOWED_ORIGINS
+from app.core.config import (
+    ALLOWED_ORIGINS,
+    IP_WHITELIST_ENABLED,
+    ALLOWED_IPS,
+    IP_WHITELIST_EXEMPT_PATHS,
+)
 from app.core.rate_limit import setup_rate_limiting
 
 # Import models to ensure they are registered in metadata
@@ -27,6 +32,9 @@ logger = logging.getLogger("app.main")
 # Get root_path from environment variable for reverse proxy support
 # This is needed when FastAPI is behind a reverse proxy (e.g., nginx) with a subpath
 ROOT_PATH = os.getenv("ROOT_PATH", "").strip()
+# اگر ROOT_PATH تنظیم نشده، سعی می‌کنیم از /backend استفاده کنیم (برای سازگاری)
+if not ROOT_PATH:
+    ROOT_PATH = "/backend"
 root_path_value = ROOT_PATH if ROOT_PATH else None
 
 app = FastAPI(
@@ -36,6 +44,116 @@ app = FastAPI(
     root_path=root_path_value,
     root_path_in_servers=True,  # اضافه کردن root_path به servers در OpenAPI schema
 )
+
+
+def get_client_ip(request: Request) -> str:
+    """
+    استخراج IP واقعی کلاینت از header های مختلف.
+    این برای زمانی است که سرور پشت reverse proxy (nginx, load balancer) باشد.
+    """
+    # اولویت: X-Forwarded-For (ممکن است چند IP باشد، اولی را می‌گیریم)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        # X-Forwarded-For می‌تواند چند IP داشته باشد (مثلاً: "client, proxy1, proxy2")
+        client_ip = forwarded_for.split(",")[0].strip()
+        if client_ip:
+            return client_ip
+
+    # دوم: X-Real-IP
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+
+    # سوم: مستقیماً از client
+    if request.client:
+        return request.client.host
+
+    return "unknown"
+
+
+@app.middleware("http")
+async def ip_whitelist_middleware(request: Request, call_next):
+    """
+    Middleware برای محدود کردن دسترسی به IP های مجاز.
+    این middleware درخواست‌ها را بررسی می‌کند و فقط از IP های مجاز اجازه دسترسی می‌دهد.
+    """
+    # اگر IP whitelist غیرفعال باشد، همه درخواست‌ها را اجازه می‌دهیم
+    if not IP_WHITELIST_ENABLED:
+        response = await call_next(request)
+        return response
+
+    # بررسی مسیرهای مستثنی
+    path = request.url.path
+    # حذف root_path از مسیر برای بررسی
+    if root_path_value and path.startswith(root_path_value):
+        path = path[len(root_path_value) :] or "/"
+
+    # بررسی اینکه آیا مسیر در لیست مستثنی‌ها است
+    is_exempt = any(
+        path == exempt_path or path.startswith(exempt_path + "/")
+        for exempt_path in IP_WHITELIST_EXEMPT_PATHS
+    )
+
+    if is_exempt:
+        # مسیرهای مستثنی (مثل /health) را بدون بررسی IP اجازه می‌دهیم
+        response = await call_next(request)
+        return response
+
+    # استخراج IP کلاینت
+    client_ip = get_client_ip(request)
+
+    # بررسی اینکه IP در لیست مجاز است یا نه
+    # همچنین localhost و 127.0.0.1 را برای توسعه محلی مجاز می‌کنیم
+    allowed = (
+        client_ip in ALLOWED_IPS
+        or client_ip == "127.0.0.1"
+        or client_ip.startswith("127.")
+        or client_ip == "localhost"
+        or client_ip == "::1"  # IPv6 localhost
+    )
+
+    if not allowed:
+        security_logger = logging.getLogger("app.security")
+        security_logger.warning(
+            f"IP whitelist violation | IP={client_ip} | Path={request.url.path} | Method={request.method}",
+            extra={
+                "client_ip": client_ip,
+                "path": request.url.path,
+                "method": request.method,
+                "headers": dict(request.headers),
+            },
+        )
+        return JSONResponse(
+            status_code=403,
+            content={
+                "detail": "دسترسی غیرمجاز: IP شما در لیست مجاز نیست",
+                "error_code": "IP_NOT_ALLOWED",
+            },
+        )
+
+    response = await call_next(request)
+    return response
+
+
+@app.middleware("http")
+async def detect_root_path(request: Request, call_next):
+    """
+    Middleware برای تشخیص خودکار root_path از URL درخواست.
+    این برای زمانی است که ROOT_PATH در environment variable تنظیم نشده باشد.
+    """
+    # اگر root_path_value تنظیم نشده باشد، سعی می‌کنیم از URL تشخیص دهیم
+    if not root_path_value and request.url.path.startswith("/backend"):
+        # تشخیص root_path از URL
+        detected_root = "/backend"
+        # ذخیره در app state برای استفاده در custom_openapi
+        if not hasattr(app.state, "detected_root_path"):
+            app.state.detected_root_path = detected_root
+            # به‌روزرسانی openapi_schema اگر قبلاً ساخته شده باشد
+            if hasattr(app, "openapi_schema") and app.openapi_schema:
+                app.openapi_schema = None  # Force regeneration
+
+    response = await call_next(request)
+    return response
 
 
 @app.middleware("http")
@@ -92,6 +210,18 @@ app.add_middleware(
 def health():
     """Health check endpoint for monitoring and load balancers."""
     return {"status": "ok", "service": "yourlawyer-rag-api"}
+
+
+@app.get("/openapi.json", include_in_schema=False)
+async def get_openapi_json():
+    """Endpoint برای بازگرداندن OpenAPI schema با در نظر گیری root_path."""
+    return app.openapi()
+
+
+@app.get("/backend/openapi.json", include_in_schema=False)
+async def get_openapi_json_backend():
+    """Endpoint برای بازگرداندن OpenAPI schema از مسیر /backend/openapi.json."""
+    return app.openapi()
 
 
 app.include_router(auth_router)
@@ -168,22 +298,19 @@ def on_startup() -> None:
         }
 
         # اضافه کردن servers برای پشتیبانی از root_path
-        if root_path_value:
-            # اگر root_path تنظیم شده، آن را به servers اضافه می‌کنیم
-            openapi_schema["servers"] = [
-                {
-                    "url": root_path_value,
-                    "description": "Production server with root path",
-                }
-            ]
-        else:
-            # اگر root_path تنظیم نشده، از root استفاده می‌کنیم
-            openapi_schema["servers"] = [
-                {
-                    "url": "/",
-                    "description": "Default server",
-                }
-            ]
+        # اولویت: root_path_value از env > detected_root_path از middleware > پیش‌فرض /backend
+        server_url = root_path_value
+        if not server_url and hasattr(app.state, "detected_root_path"):
+            server_url = app.state.detected_root_path
+        if not server_url:
+            server_url = "/backend"  # پیش‌فرض
+
+        openapi_schema["servers"] = [
+            {
+                "url": server_url,
+                "description": "Production server with root path",
+            }
+        ]
 
         app.openapi_schema = openapi_schema
         return app.openapi_schema

@@ -53,3 +53,21 @@ REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
 # Rate Limiting
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
+
+# IP Whitelist - محدود کردن دسترسی به IP های خاص
+IP_WHITELIST_ENABLED = os.getenv("IP_WHITELIST_ENABLED", "true").lower() == "true"
+ALLOWED_IPS = [
+    ip.strip()
+    for ip in os.getenv(
+        "ALLOWED_IPS", "37.59.183.158,127.0.0.1,localhost"
+    ).split(",")
+    if ip.strip()
+]
+# مسیرهایی که از محدودیت IP مستثنی هستند (مثل health check)
+IP_WHITELIST_EXEMPT_PATHS = [
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/backend/openapi.json",
+]

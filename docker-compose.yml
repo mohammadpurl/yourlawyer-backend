@@ -39,6 +39,8 @@ services:
       - POSTGRES_SERVER=db
       - PORT=5000
       - ROOT_PATH=/backend
+      - IP_WHITELIST_ENABLED=${IP_WHITELIST_ENABLED:-true}
+      - ALLOWED_IPS=${ALLOWED_IPS:-37.59.183.158,127.0.0.1,localhost}
     expose:
       - "5000"
     volumes:
