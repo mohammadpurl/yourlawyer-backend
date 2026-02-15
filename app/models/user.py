@@ -37,11 +37,13 @@ class User(Base):
 
     # Plan fields
     plan_type: Mapped[PlanType] = mapped_column(
-        SQLEnum(PlanType),
+        SQLEnum(
+            PlanType, native_enum=False
+        ),  # استفاده از VARCHAR به جای ENUM بومی PostgreSQL
         default=PlanType.FREE,
         nullable=False,
         index=True,
-        server_default="free",  # مقدار پیش‌فرض در دیتابیس
+        server_default="'free'",  # مقدار پیش‌فرض در دیتابیس (با کوتیشن)
     )
     questions_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     plan_reset_date: Mapped[date | None] = mapped_column(

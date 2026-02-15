@@ -8,7 +8,13 @@ import zipfile
 from pathlib import Path
 from typing import List, Tuple
 from fastapi import HTTPException, UploadFile
-import magic  # python-magic-bin for Windows, python-magic for Linux
+
+# تلاش برای ایمپورت کتابخانه magic.
+# در صورت عدم نصب، از بررسی بر اساس پسوند فایل استفاده می‌کنیم.
+try:
+    import magic  # python-magic-bin برای Windows، python-magic برای Linux
+except ImportError:
+    magic = None
 
 
 # مسیرهای مجاز برای دسترسی
