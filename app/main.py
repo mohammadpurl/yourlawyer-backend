@@ -211,6 +211,8 @@ async def log_requests(request: Request, call_next):
     Middleware برای لاگ‌کردن همه درخواست‌ها و پاسخ‌ها.
     """
     request_logger = logging.getLogger("app.request")
+    # استخراج IP کلاینت برای لاگ
+    client_ip = get_client_ip(request)
     # هدر Authorization را برای دیباگ ثبت می‌کنیم (توکن را ماسک می‌کنیم)
     auth_header = request.headers.get("authorization")
     masked_auth = None
@@ -223,16 +225,20 @@ async def log_requests(request: Request, call_next):
         )
 
     request_logger.info(
-        f"REQUEST {request.method} {request.url.path}",
+        f"REQUEST {request.method} {request.url.path} | IP={client_ip}",
         extra={
             "authorization_present": bool(auth_header),
             "authorization": masked_auth,
+            "client_ip": client_ip,
         },
     )
     try:
         response = await call_next(request)
         request_logger.info(
-            f"RESPONSE {request.method} {request.url.path} -> {response.status_code}"
+            f"RESPONSE {request.method} {request.url.path} -> {response.status_code} | IP={client_ip}",
+            extra={
+                "client_ip": client_ip,
+            },
         )
         return response
     except Exception:
