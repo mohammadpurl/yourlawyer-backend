@@ -12,7 +12,9 @@ class FolderPathRequest(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(..., description="Persian legal question")
     top_k: Optional[int] = Field(5, description="Number of chunks to retrieve")
-    conversation_id: Optional[int] = Field(None, description="Conversation ID")
+    # conversation_id می‌تواند موقتاً به صورت string (مثل temp_...) از فرانت ارسال شود.
+    # ما در روتر آن را به int معتبر تبدیل می‌کنیم.
+    conversation_id: Optional[str] = Field(None, description="Conversation ID")
     use_enhanced_retrieval: Optional[bool] = Field(
         True, description="Use domain-aware retrieval"
     )

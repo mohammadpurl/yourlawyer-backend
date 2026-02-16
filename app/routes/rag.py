@@ -306,10 +306,24 @@ async def ask(
         raise HTTPException(status_code=403, detail=error_message)
 
     k = req.top_k or DEFAULT_TOP_K
-    conversation_id = req.conversation_id
+
+    # conversation_id ممکن است به صورت string موقت (مثلاً "temp_...") یا عددی ارسال شود.
+    # اینجا سعی می‌کنیم آن را به int معتبر تبدیل کنیم؛ در غیر این صورت نادیده می‌گیریم
+    raw_conversation_id = req.conversation_id
+    conversation_id = None
+    if raw_conversation_id is not None:
+        try:
+            conversation_id = int(raw_conversation_id)
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid conversation_id format received",
+                extra={"conversation_id": raw_conversation_id},
+            )
+            conversation_id = None
+
     conversation = None
 
-    if conversation_id:
+    if conversation_id is not None:
         conversation = (
             db.query(Conversation)
             .filter(
