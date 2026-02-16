@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import List
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -54,16 +55,20 @@ REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 
-# IP Whitelist - محدود کردن دسترسی به IP های خاص
+# لیست IPهای مجاز
 ALLOWED_IPS: List[str] = [
-    "127.0.0.1",         # localhost
-    "172.17.0.0/16",     # subnet پیش‌فرض docker
-    "172.18.0.0/16",    
-    "172.19.0.0/16",    
-    "178.131.95.38",     # IP خودت برای تست از بیرون
+    "127.0.0.1",  # localhost
+    "172.17.0.0/16",  # subnet پیش‌فرض docker
+    "172.18.0.0/16",  # subnet پروژه شما (از لاگ دیدم)
+    "172.19.0.0/16",  # subnet اضافی اگر نیاز بود
+    "178.131.95.38",  # IP خودت برای تست از بیرون
     # اگر IPهای دیگری (مثل IP خانه یا دفتر) داری، اینجا اضافه کن
 ]
 
 IP_WHITELIST_ENABLED = True  # فعال نگه دار
-IP_WHITELIST_EXEMPT_PATHS = ["/health", "/docs", "/openapi.json", "/redoc"]  # مسیرهای مستثنی (که بدون چک IP کار کنند)
-]
+IP_WHITELIST_EXEMPT_PATHS = [
+    "/health",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+]  # مسیرهای مستثنی (که بدون چک IP کار کنند)
