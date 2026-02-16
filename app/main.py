@@ -71,6 +71,62 @@ def get_client_ip(request: Request) -> str:
     return "unknown"
 
 
+def ip_in_subnet(ip: str, subnet: str) -> bool:
+    """
+    بررسی اینکه آیا IP در subnet قرار دارد یا نه.
+
+    Args:
+        ip: IP آدرس (مثلاً "172.18.0.1")
+        subnet: subnet با CIDR notation (مثلاً "172.18.0.0/16")
+
+    Returns:
+        True اگر IP در subnet باشد
+    """
+    try:
+        import ipaddress
+
+        # اگر subnet نیست (فقط IP است)، مقایسه مستقیم
+        if "/" not in subnet:
+            return ip == subnet
+
+        # بررسی subnet
+        network = ipaddress.ip_network(subnet, strict=False)
+        ip_obj = ipaddress.ip_address(ip)
+        return ip_obj in network
+    except (ValueError, AttributeError):
+        # در صورت خطا، مقایسه مستقیم
+        return ip == subnet
+
+
+def is_ip_allowed(client_ip: str, allowed_ips: list) -> bool:
+    """
+    بررسی اینکه آیا IP کلاینت در لیست مجاز است یا نه.
+    این تابع هم IP های دقیق و هم subnet ها را پشتیبانی می‌کند.
+
+    Args:
+        client_ip: IP کلاینت
+        allowed_ips: لیست IP ها و subnet های مجاز
+
+    Returns:
+        True اگر IP مجاز باشد
+    """
+    # بررسی IP های دقیق و subnet ها
+    for allowed_ip in allowed_ips:
+        if ip_in_subnet(client_ip, allowed_ip):
+            return True
+
+    # بررسی localhost و 127.x.x.x
+    if (
+        client_ip == "127.0.0.1"
+        or client_ip.startswith("127.")
+        or client_ip == "localhost"
+        or client_ip == "::1"  # IPv6 localhost
+    ):
+        return True
+
+    return False
+
+
 @app.middleware("http")
 async def ip_whitelist_middleware(request: Request, call_next):
     """
@@ -102,15 +158,8 @@ async def ip_whitelist_middleware(request: Request, call_next):
     # استخراج IP کلاینت
     client_ip = get_client_ip(request)
 
-    # بررسی اینکه IP در لیست مجاز است یا نه
-    # همچنین localhost و 127.0.0.1 را برای توسعه محلی مجاز می‌کنیم
-    allowed = (
-        client_ip in ALLOWED_IPS
-        or client_ip == "127.0.0.1"
-        or client_ip.startswith("127.")
-        or client_ip == "localhost"
-        or client_ip == "::1"  # IPv6 localhost
-    )
+    # بررسی اینکه IP در لیست مجاز است یا نه (با پشتیبانی از subnet)
+    allowed = is_ip_allowed(client_ip, ALLOWED_IPS)
 
     if not allowed:
         security_logger = logging.getLogger("app.security")

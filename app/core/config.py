@@ -55,9 +55,10 @@ REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 
-# لیست IPهای مجاز
+# لیست IPهای مجاز (می‌تواند IP دقیق یا subnet باشد)
 ALLOWED_IPS: List[str] = [
     "127.0.0.1",  # localhost
+    "37.59.183.158",  # IP سرور فرانت اصلی
     "172.17.0.0/16",  # subnet پیش‌فرض docker
     "172.18.0.0/16",  # subnet پروژه شما (از لاگ دیدم)
     "172.19.0.0/16",  # subnet اضافی اگر نیاز بود
