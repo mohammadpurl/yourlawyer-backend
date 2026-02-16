@@ -55,19 +55,15 @@ RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 
 # IP Whitelist - محدود کردن دسترسی به IP های خاص
-IP_WHITELIST_ENABLED = os.getenv("IP_WHITELIST_ENABLED", "true").lower() == "true"
-ALLOWED_IPS = [
-    ip.strip()
-    for ip in os.getenv(
-        "ALLOWED_IPS", "37.59.183.158,127.0.0.1,localhost"
-    ).split(",")
-    if ip.strip()
+ALLOWED_IPS: List[str] = [
+    "127.0.0.1",         # localhost
+    "172.17.0.0/16",     # subnet پیش‌فرض docker
+    "172.18.0.0/16",    
+    "172.19.0.0/16",    
+    "178.131.95.38",     # IP خودت برای تست از بیرون
+    # اگر IPهای دیگری (مثل IP خانه یا دفتر) داری، اینجا اضافه کن
 ]
-# مسیرهایی که از محدودیت IP مستثنی هستند (مثل health check)
-IP_WHITELIST_EXEMPT_PATHS = [
-    "/health",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-    "/backend/openapi.json",
+
+IP_WHITELIST_ENABLED = True  # فعال نگه دار
+IP_WHITELIST_EXEMPT_PATHS = ["/health", "/docs", "/openapi.json", "/redoc"]  # مسیرهای مستثنی (که بدون چک IP کار کنند)
 ]
