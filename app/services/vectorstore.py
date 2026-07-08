@@ -1,45 +1,100 @@
-from typing import List
+from typing import List, Optional, Set
 import os
 import logging
+
+from app.core.config import HF_TIMEOUT, PERSIST_DIRECTORY, EMBEDDING_MODEL, HF_HOME
+
+# Must configure Hugging Face Hub before importing huggingface-dependent packages.
+
+
+def _configure_huggingface_hub() -> None:
+    """Apply Hugging Face Hub settings safe for environments without hf_transfer."""
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(HF_TIMEOUT))
+    os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT_S", str(HF_TIMEOUT))
+
+    wants_hf_transfer = os.getenv("HF_HUB_ENABLE_HF_TRANSFER", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if wants_hf_transfer:
+        try:
+            import hf_transfer  # noqa: F401
+        except ImportError:
+            os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+            logging.getLogger(__name__).warning(
+                "HF_HUB_ENABLE_HF_TRANSFER is enabled but hf_transfer is not installed; "
+                "using standard download. Install with: pip install hf_transfer"
+            )
+            return
+
+    # Force standard downloader unless hf_transfer is explicitly available.
+    os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+
+
+_configure_huggingface_hub()
 
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
-from app.core.config import PERSIST_DIRECTORY, EMBEDDING_MODEL
+from app.services.ingestion import hash_page_content
 
 logger = logging.getLogger(__name__)
 
-# افزایش timeout برای Hugging Face (به ثانیه)
-HF_TIMEOUT = int(os.getenv("HF_TIMEOUT", "300"))  # پیش‌فرض 300 ثانیه (5 دقیقه)
+_embeddings_cache: HuggingFaceEmbeddings | None = None
 
-# تنظیم timeout برای Hugging Face Hub قبل از import
-os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = str(HF_TIMEOUT)
-os.environ["HF_HUB_DOWNLOAD_TIMEOUT_S"] = str(HF_TIMEOUT)
+
+def _get_chroma_collection(collection_name: str = "legal-texts"):
+    """Access Chroma collection without loading the embedding model."""
+    import chromadb
+
+    os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+    client = chromadb.PersistentClient(path=PERSIST_DIRECTORY)
+    try:
+        return client.get_collection(collection_name)
+    except Exception:
+        return None
 
 
 def get_embeddings() -> HuggingFaceEmbeddings:
     """Get embeddings model with increased timeout for slow connections."""
-    try:
-        # تنظیم timeout برای Hugging Face Hub (اگر قبلاً تنظیم نشده)
-        os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(HF_TIMEOUT))
+    global _embeddings_cache
+    if _embeddings_cache is not None:
+        return _embeddings_cache
 
+    _configure_huggingface_hub()
+    try:
         embeddings = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL,
             encode_kwargs={"normalize_embeddings": True},
         )
         logger.info(f"Embeddings model '{EMBEDDING_MODEL}' initialized successfully")
+        _embeddings_cache = embeddings
         return embeddings
     except Exception as e:
+        error_text = str(e).lower()
         logger.error(f"Failed to initialize embeddings model '{EMBEDDING_MODEL}': {e}")
+        if "not enough space" in error_text or "no space" in error_text:
+            logger.error(
+                "Disk space is insufficient for downloading the embedding model (~1.1 GB). "
+                f"Free space on the cache drive or set HF_HOME to a drive with enough space. "
+                f"Current HF_HOME: {HF_HOME}"
+            )
         logger.error(
-            "If you're experiencing timeout issues, try:\n"
-            "1. Set HF_TIMEOUT environment variable to a higher value (e.g., 600 for 10 minutes)\n"
-            "2. Check your internet connection\n"
-            "3. Use a VPN if Hugging Face is blocked in your region\n"
-            "4. Pre-download the model manually using: huggingface-cli download intfloat/multilingual-e5-base"
+            "If you're experiencing timeout or network issues, try:\n"
+            "1. Run: python scripts/download_embedding_model.py\n"
+            "2. Set HF_ENDPOINT=https://hf-mirror.com if huggingface.co is blocked\n"
+            "3. Set HF_TIMEOUT=1200 for slow connections\n"
+            "4. Place a local model in storage/models/multilingual-e5-base\n"
+            f"5. Current HF_HOME: {HF_HOME}"
         )
         raise
+
+
+def ensure_embeddings_ready() -> None:
+    """Load embedding model early so bulk ingest fails fast with a clear error."""
+    get_embeddings()
 
 
 def get_vectorstore(collection_name: str = "legal-texts") -> Chroma:
@@ -51,8 +106,85 @@ def get_vectorstore(collection_name: str = "legal-texts") -> Chroma:
     )
 
 
+def get_existing_content_hashes(collection_name: str = "legal-texts") -> Set[str]:
+    """Return content hashes for all vectors (metadata or computed from page_content)."""
+    try:
+        collection = _get_chroma_collection(collection_name)
+        if collection is None:
+            return set()
+
+        count = collection.count()
+        if count == 0:
+            return set()
+
+        hashes: Set[str] = set()
+        from_metadata = 0
+        from_content = 0
+        batch_size = 5000
+
+        for offset in range(0, count, batch_size):
+            batch = collection.get(
+                limit=min(batch_size, count - offset),
+                offset=offset,
+                include=["metadatas", "documents"],
+            )
+            metadatas = batch.get("metadatas") or []
+            documents = batch.get("documents") or []
+
+            for idx, metadata in enumerate(metadatas):
+                content_hash = None
+                if metadata and isinstance(metadata, dict):
+                    content_hash = metadata.get("content_hash")
+
+                if content_hash:
+                    hashes.add(str(content_hash))
+                    from_metadata += 1
+                elif idx < len(documents) and documents[idx]:
+                    hashes.add(hash_page_content(documents[idx]))
+                    from_content += 1
+
+        logger.info(
+            "Loaded %s unique content hashes from Chroma (%s from metadata, %s from page_content)",
+            len(hashes),
+            from_metadata,
+            from_content,
+        )
+        return hashes
+    except Exception as exc:
+        logger.warning(f"Could not load existing content hashes: {exc}")
+        return set()
+
+
+def _prepare_documents_for_insert(
+    documents: List[Document], existing_hashes: Set[str]
+) -> tuple[List[Document], List[str], int]:
+    """Filter duplicates and assign stable IDs based on content_hash."""
+    prepared: List[Document] = []
+    ids: List[str] = []
+    skipped = 0
+
+    for doc in documents:
+        metadata = dict(doc.metadata or {})
+        content_hash = metadata.get("content_hash")
+        if not content_hash:
+            content_hash = hash_page_content(doc.page_content)
+            metadata["content_hash"] = content_hash
+
+        if content_hash in existing_hashes:
+            skipped += 1
+            continue
+
+        existing_hashes.add(content_hash)
+        prepared.append(Document(page_content=doc.page_content, metadata=metadata))
+        ids.append(str(content_hash))
+
+    return prepared, ids, skipped
+
+
 def add_documents(
-    documents: List[Document], collection_name: str = "legal-texts"
+    documents: List[Document],
+    collection_name: str = "legal-texts",
+    existing_hashes: Optional[Set[str]] = None,
 ) -> int:
     if not documents:
         return 0
@@ -60,6 +192,17 @@ def add_documents(
     import logging
 
     logger = logging.getLogger(__name__)
+
+    if existing_hashes is None:
+        existing_hashes = get_existing_content_hashes(collection_name)
+    documents, doc_ids, skipped = _prepare_documents_for_insert(
+        documents, existing_hashes
+    )
+    if skipped:
+        logger.info(f"Skipped {skipped} duplicate chunks already in collection")
+    if not documents:
+        logger.info("No new documents to add after deduplication")
+        return 0
 
     # ChromaDB حداکثر batch size حدود 5461 است، پس به batch های کوچکتر تقسیم می‌کنیم
     BATCH_SIZE = 5000  # کمی کمتر از حد مجاز برای اطمینان
@@ -72,11 +215,12 @@ def add_documents(
         total_batches = (len(documents) + BATCH_SIZE - 1) // BATCH_SIZE
         for i in range(0, len(documents), BATCH_SIZE):
             batch = documents[i : i + BATCH_SIZE]
+            batch_ids = doc_ids[i : i + BATCH_SIZE]
             batch_num = i // BATCH_SIZE + 1
             logger.info(
                 f"Adding batch {batch_num}/{total_batches} ({len(batch)} documents)"
             )
-            vs.add_documents(batch)
+            vs.add_documents(batch, ids=batch_ids)
             total_added += len(batch)
             # Persist بعد از هر batch برای اطمینان از ذخیره داده‌ها
             vs.persist()
@@ -113,11 +257,12 @@ def add_documents(
 
         for i in range(0, len(documents), BATCH_SIZE):
             batch = documents[i : i + BATCH_SIZE]
+            batch_ids = doc_ids[i : i + BATCH_SIZE]
             batch_num = i // BATCH_SIZE + 1
             logger.info(
                 f"Adding batch {batch_num}/{total_batches} ({len(batch)} documents) after reset"
             )
-            vs.add_documents(batch)
+            vs.add_documents(batch, ids=batch_ids)
             total_added += len(batch)
             # Persist بعد از هر batch
             vs.persist()
@@ -138,10 +283,12 @@ def get_stored_sources(collection_name: str = "legal-texts") -> dict[str, int]:
     import logging
 
     logger = logging.getLogger(__name__)
-    vs = get_vectorstore(collection_name)
+    collection = _get_chroma_collection(collection_name)
 
     try:
-        collection = vs._collection
+        if collection is None:
+            logger.info("Collection does not exist yet")
+            return {}
 
         # بررسی اینکه آیا collection خالی است
         try:
@@ -202,9 +349,9 @@ def get_stored_sources(collection_name: str = "legal-texts") -> dict[str, int]:
 
 
 def stats(collection_name: str = "legal-texts") -> dict:
-    vs = get_vectorstore(collection_name)
+    collection = _get_chroma_collection(collection_name)
     try:
-        count = vs._collection.count()
+        count = collection.count() if collection is not None else 0
     except Exception:
         count = 0
     return {

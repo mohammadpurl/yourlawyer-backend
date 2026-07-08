@@ -14,7 +14,8 @@ from datetime import date
 
 
 # استفاده از HTTPBearer برای پشتیبانی از Bearer Token در Swagger
-security = HTTPBearer()
+# scheme_name باید با securitySchemes در openapi (Bearer) یکی باشد.
+security = HTTPBearer(scheme_name="Bearer")
 
 
 def get_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:

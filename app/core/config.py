@@ -2,6 +2,10 @@ import os
 from pathlib import Path
 from typing import List
 
+# Hugging Face Hub settings must be set before huggingface_hub is imported anywhere.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -18,10 +22,31 @@ SQLALCHEMY_DATABASE_URL = os.getenv(
 )
 
 # Embeddings
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "intfloat/multilingual-e5-base")
+DEFAULT_EMBEDDING_MODEL = "intfloat/multilingual-e5-base"
+LOCAL_EMBEDDING_MODEL_DIR = BASE_DIR / "storage" / "models" / "multilingual-e5-base"
+_env_model = os.getenv("EMBEDDING_MODEL")
+if _env_model:
+    EMBEDDING_MODEL = _env_model
+elif LOCAL_EMBEDDING_MODEL_DIR.is_dir() and (LOCAL_EMBEDDING_MODEL_DIR / "config.json").exists():
+    EMBEDDING_MODEL = LOCAL_EMBEDDING_MODEL_DIR.as_posix()
+else:
+    EMBEDDING_MODEL = DEFAULT_EMBEDDING_MODEL
 HF_TIMEOUT = int(
-    os.getenv("HF_TIMEOUT", "120")
+    os.getenv("HF_TIMEOUT", "600")
 )  # Timeout for Hugging Face downloads (seconds)
+HF_HOME = Path(os.getenv("HF_HOME", BASE_DIR / "storage" / "huggingface"))
+HF_HOME.mkdir(parents=True, exist_ok=True)
+LOCAL_EMBEDDING_MODEL_DIR.parent.mkdir(parents=True, exist_ok=True)
+if "HF_HOME" not in os.environ:
+    os.environ["HF_HOME"] = HF_HOME.as_posix()
+if "HUGGINGFACE_HUB_CACHE" not in os.environ:
+    os.environ["HUGGINGFACE_HUB_CACHE"] = (HF_HOME / "hub").as_posix()
+if "TRANSFORMERS_CACHE" not in os.environ:
+    os.environ["TRANSFORMERS_CACHE"] = (HF_HOME / "transformers").as_posix()
+if "HF_HUB_DOWNLOAD_TIMEOUT" not in os.environ:
+    os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = str(HF_TIMEOUT)
+if "HF_HUB_DOWNLOAD_TIMEOUT_S" not in os.environ:
+    os.environ["HF_HUB_DOWNLOAD_TIMEOUT_S"] = str(HF_TIMEOUT)
 
 # LLM selection
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")

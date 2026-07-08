@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, Dict, List, Tuple
+import hashlib
 import re
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -15,6 +16,85 @@ except Exception:
     _HAS_DOCX = False
 
 from app.core.config import CHUNK_SIZE, CHUNK_OVERLAP
+
+E5_PASSAGE_PREFIX = "passage: "
+_DOC_ID_PATTERN = re.compile(r"^(\d+)_(.+)$")
+_ARTICLE_NUMBER_PATTERN = re.compile(r"^[0-9\u06F0-\u06F9]+")
+
+
+def _content_hash(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", text.strip())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def hash_page_content(page_content: str) -> str:
+    """Compute content_hash for stored or chunked text (strips E5 passage prefix)."""
+    text = page_content.strip()
+    if text.startswith(E5_PASSAGE_PREFIX):
+        text = text[len(E5_PASSAGE_PREFIX) :]
+    return _content_hash(text)
+
+
+def _e5_passage_text(text: str) -> str:
+    """Prefix document text for multilingual-e5 passage encoding."""
+    stripped = text.strip()
+    if stripped.startswith(E5_PASSAGE_PREFIX):
+        return stripped
+    return f"{E5_PASSAGE_PREFIX}{stripped}"
+
+
+def parse_source_metadata(source: str) -> Dict[str, Any]:
+    """Extract doc_id and law_name from ghavanin-style filenames."""
+    stem = Path(source).stem
+    match = _DOC_ID_PATTERN.match(stem)
+    if match:
+        return {
+            "doc_id": match.group(1),
+            "law_name": match.group(2).strip(),
+        }
+    return {"law_name": stem}
+
+
+def _extract_article_number(unit_kind: str, unit_title: str) -> str | None:
+    if unit_kind not in {"ماده", "اصل", "تبصره", "بند"}:
+        return None
+    number_match = _ARTICLE_NUMBER_PATTERN.match(unit_title.strip())
+    if number_match:
+        return number_match.group(0)
+    return None
+
+
+def _build_chunk_metadata(
+    source: str,
+    document_type: str,
+    legal_domain: str,
+    content: str,
+    *,
+    unit_kind: str | None = None,
+    unit_title: str | None = None,
+    unit_index: int | None = None,
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
+        "source": source,
+        "document_type": document_type,
+        "legal_domain": legal_domain,
+        "content_hash": _content_hash(content),
+        **parse_source_metadata(source),
+    }
+    if unit_kind is not None:
+        metadata["unit_kind"] = unit_kind
+    if unit_title is not None:
+        metadata["unit_title"] = unit_title
+        article_number = _extract_article_number(unit_kind or "", unit_title)
+        if article_number:
+            metadata["article_number"] = article_number
+    if unit_index is not None:
+        metadata["unit_index"] = unit_index
+    return metadata
+
+
+def _make_document(content: str, metadata: Dict[str, Any]) -> Document:
+    return Document(page_content=_e5_passage_text(content), metadata=metadata)
 
 
 def _load_pdf(path: Path) -> str:
@@ -140,16 +220,17 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
             if not content:
                 continue
             documents.append(
-                Document(
-                    page_content=content,
-                    metadata={
-                        "source": source,
-                        "document_type": document_type,
-                        "legal_domain": legal_domain,
-                        "unit_kind": kind,
-                        "unit_title": title,
-                        "unit_index": idx,
-                    },
+                _make_document(
+                    content,
+                    _build_chunk_metadata(
+                        source,
+                        document_type,
+                        legal_domain,
+                        content,
+                        unit_kind=kind,
+                        unit_title=title,
+                        unit_index=idx,
+                    ),
                 )
             )
         return documents
@@ -162,16 +243,23 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
         separators=separators,
         add_start_index=True,
     )
-    docs = splitter.create_documents(
-        [text],
-        metadatas=[
-            {
-                "source": source,
-                "document_type": document_type,
-                "legal_domain": legal_domain,
-            }
-        ],
-    )
+    docs: List[Document] = []
+    for doc in splitter.create_documents([text], metadatas=[{}]):
+        content = doc.page_content.strip()
+        if not content:
+            continue
+        docs.append(
+            _make_document(
+                content,
+                _build_chunk_metadata(
+                    source,
+                    document_type,
+                    legal_domain,
+                    content,
+                    unit_index=doc.metadata.get("start_index"),
+                ),
+            )
+        )
     return docs
 
 
