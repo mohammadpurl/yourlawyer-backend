@@ -80,21 +80,29 @@ REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
 RATE_LIMIT_PER_MINUTE = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
 
-# لیست IPهای مجاز (می‌تواند IP دقیق یا subnet باشد)
+# Environment
+ENVIRONMENT = os.getenv("ENVIRONMENT", "development").lower()
+IS_PRODUCTION = ENVIRONMENT == "production"
+DOCS_ENABLED = os.getenv(
+    "DOCS_ENABLED", "false" if IS_PRODUCTION else "true"
+).lower() == "true"
+
+# IP whitelist (off by default in production — public users need API access)
+_default_ip_whitelist = "false" if IS_PRODUCTION else "true"
+IP_WHITELIST_ENABLED = (
+    os.getenv("IP_WHITELIST_ENABLED", _default_ip_whitelist).lower() == "true"
+)
+
+_default_allowed_ips = (
+    "127.0.0.1,172.17.0.0/16,172.18.0.0/16,172.19.0.0/16"
+)
+_allowed_ips_env = os.getenv("ALLOWED_IPS", _default_allowed_ips)
 ALLOWED_IPS: List[str] = [
-    "127.0.0.1",  # localhost
-    "37.59.183.158",  # IP سرور فرانت اصلی
-    "172.17.0.0/16",  # subnet پیش‌فرض docker
-    "172.18.0.0/16",  # subnet پروژه شما (از لاگ دیدم)
-    "172.19.0.0/16",  # subnet اضافی اگر نیاز بود
-    "178.131.95.38",  # IP خودت برای تست از بیرون
-    # اگر IPهای دیگری (مثل IP خانه یا دفتر) داری، اینجا اضافه کن
+    ip.strip() for ip in _allowed_ips_env.split(",") if ip.strip()
 ]
 
-IP_WHITELIST_ENABLED = True  # فعال نگه دار
 IP_WHITELIST_EXEMPT_PATHS = [
     "/health",
-    "/docs",
-    "/openapi.json",
-    "/redoc",
-]  # مسیرهای مستثنی (که بدون چک IP کار کنند)
+]
+if DOCS_ENABLED:
+    IP_WHITELIST_EXEMPT_PATHS.extend(["/docs", "/openapi.json", "/redoc"])

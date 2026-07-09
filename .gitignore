@@ -59,13 +59,23 @@ vector_stores/
 *.sqlite
 *.sqlite3
 
+# Runtime storage (do not commit Chroma / models / HF cache)
+storage/chroma/
+storage/models/
+storage/huggingface/
+storage/*.log
+storage/ingest_manifest.json
+storage/complete_ingest*.json
+storage/complete_ingest*.log
+storage/audit_report*.json
+
 # Logs
 *.log
 logs/
 .github/
 .mypy-cache/
 data/
-storage/
+
 .env
 .env.local
 .env.*.local

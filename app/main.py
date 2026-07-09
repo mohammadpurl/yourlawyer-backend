@@ -17,6 +17,7 @@ from app.core.config import (
     IP_WHITELIST_ENABLED,
     ALLOWED_IPS,
     IP_WHITELIST_EXEMPT_PATHS,
+    DOCS_ENABLED,
 )
 from app.core.rate_limit import setup_rate_limiting
 
@@ -42,7 +43,10 @@ app = FastAPI(
     description="API برای سیستم دستیار حقوقی با RAG و پشتیبانی از گفتگوها",
     version="1.0.0",
     root_path=root_path_value,
-    root_path_in_servers=True,  # اضافه کردن root_path به servers در OpenAPI schema
+    root_path_in_servers=True,
+    docs_url="/docs" if DOCS_ENABLED else None,
+    redoc_url="/redoc" if DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if DOCS_ENABLED else None,
 )
 
 
@@ -267,16 +271,17 @@ def health():
     return {"status": "ok", "service": "yourlawyer-rag-api"}
 
 
-@app.get("/openapi.json", include_in_schema=False)
-async def get_openapi_json():
-    """Endpoint برای بازگرداندن OpenAPI schema با در نظر گیری root_path."""
-    return app.openapi()
+if DOCS_ENABLED:
 
+    @app.get("/openapi.json", include_in_schema=False)
+    async def get_openapi_json():
+        """Endpoint برای بازگرداندن OpenAPI schema با در نظر گیری root_path."""
+        return app.openapi()
 
-@app.get("/backend/openapi.json", include_in_schema=False)
-async def get_openapi_json_backend():
-    """Endpoint برای بازگرداندن OpenAPI schema از مسیر /backend/openapi.json."""
-    return app.openapi()
+    @app.get("/backend/openapi.json", include_in_schema=False)
+    async def get_openapi_json_backend():
+        """Endpoint برای بازگرداندن OpenAPI schema از مسیر /backend/openapi.json."""
+        return app.openapi()
 
 
 app.include_router(auth_router)

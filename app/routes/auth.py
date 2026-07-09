@@ -1,11 +1,13 @@
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
+import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, Base, engine
 from app.core.config import ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.rate_limit import limiter
 from app.schemas.auth import (
     TokenResponse,
     SendOtpRequest,
@@ -17,40 +19,42 @@ from app.services.auth import (
     create_access_token,
     get_current_user,
 )
-from app.services.otp import generate_otp, verify_otp, send_sms_mock, send_sms_real
+from app.services.otp import generate_otp, verify_otp, send_sms_real
 from app.models.user import User
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 # Ensure tables exist (simple bootstrap)
 Base.metadata.create_all(bind=engine)
 
 
-# Register endpoint removed - registration happens via OTP verification
-
-
 @router.post("/login")
-def login_start(payload: SendOtpRequest):
-    # Login is OTP-based: send code
+@limiter.limit("5/minute")
+def login_start(request: Request, payload: SendOtpRequest):
     code = generate_otp(payload.mobile)
     send_sms_real(payload.mobile, code)
-    return {"sent": {code}}
+    return {"sent": True}
 
 
 @router.post("/otp/send")
-def otp_send(payload: SendOtpRequest):
+@limiter.limit("5/minute")
+def otp_send(request: Request, payload: SendOtpRequest):
     code = generate_otp(payload.mobile)
-    print("code sentttttttttt:", code)
     send_sms_real(payload.mobile, code)
-    return {"sent": {code}}
+    logger.info("OTP sent to mobile ending %s", payload.mobile[-4:])
+    return {"sent": True}
 
 
 @router.post("/otp/verify", response_model=TokenResponse)
-def otp_verify(payload: VerifyOtpRequest, db: Session = Depends(get_db)):
-    print("code isssssssssss:", payload.code)
-    print(payload.mobile, payload.code)
+@limiter.limit("10/minute")
+def otp_verify(
+    request: Request,
+    payload: VerifyOtpRequest,
+    db: Session = Depends(get_db),
+):
     ok = verify_otp(payload.mobile, payload.code)
     if not ok:
         raise HTTPException(status_code=400, detail="کد وارد شده صحیح نیست")

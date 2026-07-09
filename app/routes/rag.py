@@ -11,7 +11,7 @@ from app.models.user import User, Conversation, Message
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Body
 from pydantic import BaseModel
 
-from app.core.config import UPLOAD_DIRECTORY, DEFAULT_TOP_K, BASE_DIR
+from app.core.config import UPLOAD_DIRECTORY, DEFAULT_TOP_K, BASE_DIR, IS_PRODUCTION
 from app.core.security import encrypt_bytes, is_encryption_enabled
 from app.core.rate_limit import limiter, get_rate_limit_string
 from app.core.security_utils import (
@@ -48,14 +48,14 @@ router = APIRouter(prefix="/rag", tags=["rag"])
 
 
 @router.get("/stats")
-async def get_stats():
+async def get_stats(current_user: User = Depends(get_current_user)):
     import asyncio
 
     return await asyncio.to_thread(stats)
 
 
 @router.get("/sources", response_model=StoredSourcesResponse)
-async def get_stored_sources_list():
+async def get_stored_sources_list(current_user: User = Depends(get_current_user)):
     """
     دریافت لیست تمام فایل‌های ذخیره شده در vectordb.
 
@@ -82,10 +82,10 @@ async def get_stored_sources_list():
 
 
 @router.get("/debug-sources")
-def debug_sources():
-    """
-    Endpoint دیباگ برای بررسی دقیق وضعیت vectordb و فایل‌های ذخیره شده.
-    """
+def debug_sources(current_user: User = Depends(get_current_user)):
+    """Endpoint دیباگ برای بررسی دقیق وضعیت vectordb و فایل‌های ذخیره شده."""
+    if IS_PRODUCTION:
+        raise HTTPException(status_code=404, detail="Not found")
     from app.services.vectorstore import get_vectorstore
     import logging
 
@@ -144,7 +144,10 @@ def debug_sources():
 
 
 @router.post("/upload")
-async def upload(files: List[UploadFile] = File(...)):
+async def upload(
+    files: List[UploadFile] = File(...),
+    current_user: User = Depends(get_current_user),
+):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
     saved_paths: List[Path] = []
@@ -169,7 +172,10 @@ async def upload(files: List[UploadFile] = File(...)):
 
 
 @router.post("/upload-folder-zip")
-async def upload_folder_zip(zip_file: UploadFile = File(...)):
+async def upload_folder_zip(
+    zip_file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
     """
     آپلود فایل ZIP حاوی فایل‌های Word و اضافه کردن همه آن‌ها به vectordb.
 
@@ -227,13 +233,18 @@ async def upload_folder_zip(zip_file: UploadFile = File(...)):
 async def upload_folder_from_path(
     folder_path: str = Body(..., embed=True),
     recursive: bool = Body(True, embed=True),
+    current_user: User = Depends(get_current_user),
 ):
     """
     پردازش فولدر از مسیر محلی سرور و اضافه کردن همه فایل‌های Word آن به vectordb.
 
-    این endpoint برای زمانی است که فایل‌ها از قبل در سرور موجود هستند.
-    مسیر می‌تواند نسبی به BASE_DIR یا مطلق باشد.
+    فقط در محیط development فعال است.
     """
+    if IS_PRODUCTION:
+        raise HTTPException(
+            status_code=403,
+            detail="این endpoint در محیط production غیرفعال است",
+        )
     # تبدیل مسیر به Path
     folder = Path(folder_path)
 
@@ -470,8 +481,16 @@ async def ask(
 
 
 @router.delete("/reset")
-def reset_collection(collection_name: str = "legal-texts"):
+def reset_collection(
+    collection_name: str = "legal-texts",
+    current_user: User = Depends(get_current_user),
+):
     """Reset/delete a ChromaDB collection (useful for fixing corruption)."""
+    if IS_PRODUCTION:
+        raise HTTPException(
+            status_code=403,
+            detail="این endpoint در محیط production غیرفعال است",
+        )
     import logging
 
     logger = logging.getLogger(__name__)
