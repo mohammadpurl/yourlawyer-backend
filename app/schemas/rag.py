@@ -23,6 +23,7 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: List[str] = []
+    conversation_id: Optional[int] = None
     response_time_seconds: Optional[float] = None
     citation_count: Optional[int] = None
     citation_accuracy: Optional[float] = None

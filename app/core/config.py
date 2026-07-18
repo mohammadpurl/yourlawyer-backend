@@ -65,6 +65,8 @@ RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-
 SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+# Required to change user plans via API (header: X-Plan-Admin-Secret)
+PLAN_ADMIN_SECRET = os.getenv("PLAN_ADMIN_SECRET", "")
 
 # CORS
 ALLOWED_ORIGINS = os.getenv(

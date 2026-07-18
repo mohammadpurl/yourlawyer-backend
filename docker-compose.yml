@@ -48,6 +48,7 @@ services:
       - OTP_API_KEY=${OTP_API_KEY}
       - OTP_TEMPLATE_ID=${OTP_TEMPLATE_ID}
       - OTP_URL=${OTP_URL:-https://api.sms.ir/v1/send/verify}
+      - PLAN_ADMIN_SECRET=${PLAN_ADMIN_SECRET:-}
     expose:
       - "5000"
     volumes:

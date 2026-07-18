@@ -1,5 +1,6 @@
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -38,6 +39,59 @@ if not ROOT_PATH:
     ROOT_PATH = "/backend"
 root_path_value = ROOT_PATH if ROOT_PATH else None
 
+
+def _configure_openapi(application: FastAPI) -> None:
+    """Configure OpenAPI schema with Bearer auth and root_path servers."""
+    from fastapi.openapi.utils import get_openapi
+
+    def custom_openapi():
+        if application.openapi_schema:
+            return application.openapi_schema
+
+        openapi_schema = get_openapi(
+            title=application.title,
+            version=application.version,
+            description=application.description,
+            routes=application.routes,
+        )
+
+        openapi_schema["components"]["securitySchemes"] = {
+            "Bearer": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": "توکن را از endpoint `/auth/otp/verify` دریافت کنید. ابتدا با شماره موبایل و OTP لاگین کنید، سپس `accessToken` را در اینجا وارد کنید.",
+            }
+        }
+
+        server_url = root_path_value
+        if not server_url and hasattr(application.state, "detected_root_path"):
+            server_url = application.state.detected_root_path
+        if not server_url:
+            server_url = "/backend"
+
+        openapi_schema["servers"] = [
+            {
+                "url": server_url,
+                "description": "Production server with root path",
+            }
+        ]
+
+        application.openapi_schema = openapi_schema
+        return application.openapi_schema
+
+    application.openapi = custom_openapi
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Application lifespan: create DB tables and configure OpenAPI on startup."""
+    Base.metadata.create_all(bind=engine)
+    _configure_openapi(application)
+    logger.info("Startup completed: database tables ensured")
+    yield
+
+
 app = FastAPI(
     title="YourLawyer RAG (IR)",
     description="API برای سیستم دستیار حقوقی با RAG و پشتیبانی از گفتگوها",
@@ -47,6 +101,7 @@ app = FastAPI(
     docs_url="/docs" if DOCS_ENABLED else None,
     redoc_url="/redoc" if DOCS_ENABLED else None,
     openapi_url="/openapi.json" if DOCS_ENABLED else None,
+    lifespan=lifespan,
 )
 
 
@@ -324,58 +379,6 @@ async def unhandled_exception_logger(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "خطای داخلی سرور رخ داد. لطفاً بعداً دوباره تلاش کنید."},
     )
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    """تنظیمات اولیه هنگام راه‌اندازی سرور"""
-    # Create all tables if they do not exist
-    Base.metadata.create_all(bind=engine)
-    logger.info("Startup completed: database tables ensured")
-
-    # تنظیم Swagger UI برای پشتیبانی از Bearer Token و root_path
-    from fastapi.openapi.utils import get_openapi
-
-    def custom_openapi():
-        if app.openapi_schema:
-            return app.openapi_schema
-
-        openapi_schema = get_openapi(
-            title=app.title,
-            version=app.version,
-            description=app.description,
-            routes=app.routes,
-        )
-
-        # اضافه کردن Security Scheme برای Bearer Token
-        openapi_schema["components"]["securitySchemes"] = {
-            "Bearer": {
-                "type": "http",
-                "scheme": "bearer",
-                "bearerFormat": "JWT",
-                "description": "توکن را از endpoint `/auth/otp/verify` دریافت کنید. ابتدا با شماره موبایل و OTP لاگین کنید، سپس `accessToken` را در اینجا وارد کنید.",
-            }
-        }
-
-        # اضافه کردن servers برای پشتیبانی از root_path
-        # اولویت: root_path_value از env > detected_root_path از middleware > پیش‌فرض /backend
-        server_url = root_path_value
-        if not server_url and hasattr(app.state, "detected_root_path"):
-            server_url = app.state.detected_root_path
-        if not server_url:
-            server_url = "/backend"  # پیش‌فرض
-
-        openapi_schema["servers"] = [
-            {
-                "url": server_url,
-                "description": "Production server with root path",
-            }
-        ]
-
-        app.openapi_schema = openapi_schema
-        return app.openapi_schema
-
-    app.openapi = custom_openapi
 
 
 if __name__ == "__main__":

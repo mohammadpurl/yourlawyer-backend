@@ -212,15 +212,19 @@ def validate_upload_file(file: UploadFile) -> None:
     if not file.filename:
         raise HTTPException(status_code=400, detail="نام فایل مشخص نشده است")
 
-    # پاکسازی نام فایل
-    sanitized_name = sanitize_filename(file.filename)
-    if sanitized_name != file.filename:
+    # Reject obvious traversal before sanitization
+    raw = file.filename
+    if ".." in raw or raw.startswith("/") or "\\" in raw or "/" in raw:
         raise HTTPException(
             status_code=400, detail="نام فایل شامل کاراکترهای غیرمجاز است"
         )
 
-    # بررسی پسوند
-    if not validate_file_extension(file.filename):
+    sanitized_name = sanitize_filename(raw)
+    if not sanitized_name:
+        raise HTTPException(status_code=400, detail="نام فایل نامعتبر است")
+
+    # بررسی پسوند روی نام پاک‌سازی‌شده
+    if not validate_file_extension(sanitized_name):
         raise HTTPException(
             status_code=400,
             detail=f"نوع فایل مجاز نیست. انواع مجاز: {', '.join(ALLOWED_EXTENSIONS)}",

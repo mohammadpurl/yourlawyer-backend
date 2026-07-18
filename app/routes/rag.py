@@ -152,17 +152,28 @@ async def upload(
         raise HTTPException(status_code=400, detail="No files provided")
     saved_paths: List[Path] = []
     encryption_active = is_encryption_enabled()
+    upload_root = UPLOAD_DIRECTORY.resolve()
+    upload_root.mkdir(parents=True, exist_ok=True)
 
     for f in files:
-        original_dest = UPLOAD_DIRECTORY / f.filename
+        validate_upload_file(f)
+        safe_name = sanitize_filename(f.filename or "upload.bin")
+        if not safe_name or not validate_file_extension(safe_name):
+            raise HTTPException(status_code=400, detail="نام یا نوع فایل مجاز نیست")
+
         content = await f.read()
-        original_dest.parent.mkdir(parents=True, exist_ok=True)
+        check_file_size(content)
+
+        dest = (upload_root / safe_name).resolve()
+        try:
+            dest.relative_to(upload_root)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="مسیر فایل نامعتبر است")
 
         if encryption_active:
-            dest = original_dest.with_suffix(original_dest.suffix + ".enc")
+            dest = dest.with_suffix(dest.suffix + ".enc")
             dest.write_bytes(encrypt_bytes(content))
         else:
-            dest = original_dest
             dest.write_bytes(content)
 
         saved_paths.append(dest)
@@ -185,27 +196,28 @@ async def upload_folder_zip(
     import zipfile
     import tempfile
 
-    if not zip_file.filename:
-        raise HTTPException(status_code=400, detail="نام فایل مشخص نشده است")
-
-    if not zip_file.filename.lower().endswith(".zip"):
+    validate_upload_file(zip_file)
+    if not (zip_file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="فایل باید از نوع ZIP باشد")
 
     # ایجاد یک فولدر موقت برای استخراج
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
 
-        # ذخیره فایل ZIP
-        zip_path = temp_path / zip_file.filename
+        safe_zip_name = sanitize_filename(zip_file.filename or "upload.zip")
+        zip_path = temp_path / safe_zip_name
         content = await zip_file.read()
+        check_file_size(content)
         zip_path.write_bytes(content)
 
-        # استخراج و پردازش فایل‌های Word
+        # استخراج و پردازش فایل‌های Word (Zip Slip–safe)
         extract_to = temp_path / "extracted"
         try:
             documents = ingest_zip_folder(zip_path, extract_to)
         except zipfile.BadZipFile:
             raise HTTPException(status_code=400, detail="فایل ZIP معتبر نیست")
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(
                 status_code=500, detail=f"خطا در پردازش فایل ZIP: {str(e)}"
@@ -343,8 +355,21 @@ async def ask(
             )
             .first()
         )
+        # Stale ids from frontend localStorage / DB reset: create a fresh conversation
         if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
+            title = (req.question or "").strip()[:50] or "گفتگوی جدید"
+            conversation = Conversation(user_id=current_user.id, title=title)
+            db.add(conversation)
+            db.commit()
+            db.refresh(conversation)
+            logger.warning(
+                "Conversation not found; created a new one",
+                extra={
+                    "requested_id": conversation_id,
+                    "new_id": conversation.id,
+                    "user_id": current_user.id,
+                },
+            )
 
         # ذخیره خودکار سوال کاربر در دیتابیس
         user_msg = Message(
@@ -398,8 +423,8 @@ async def ask(
         # افزایش تعداد سوالات استفاده شده توسط کاربر
         increment_user_question_count(current_user, db)
 
-        # ذخیره خودکار پاسخ دستیار اگر conversation_id وجود داشته باشد
-        if conversation_id and conversation:
+        # ذخیره خودکار پاسخ دستیار اگر conversation وجود داشته باشد
+        if conversation is not None:
             try:
                 answer = result.get("answer") or ""
                 assistant_msg = Message(
@@ -415,6 +440,9 @@ async def ask(
                     f"Failed to save assistant message: {db_error}", exc_info=True
                 )
                 # ادامه می‌دهیم حتی اگر ذخیره نشد
+
+        if conversation is not None:
+            result["conversation_id"] = conversation.id
 
         # ساخت و برگرداندن پاسخ
 

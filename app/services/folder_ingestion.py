@@ -1,9 +1,9 @@
-import zipfile
 from pathlib import Path
 from typing import List
 
 from langchain_core.documents import Document
 
+from app.core.security_utils import safe_extract_zip
 from app.services.ingestion import load_text_from_file, chunk_text
 
 
@@ -45,21 +45,16 @@ def extract_word_files_from_zip(zip_path: Path, extract_to: Path) -> List[Path]:
     Returns:
         لیست مسیرهای فایل‌های Word استخراج شده
     """
-    word_files: List[Path] = []
     word_extensions = {".docx", ".doc"}
-
     extract_to.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        # استخراج همه فایل‌ها
-        zip_ref.extractall(extract_to)
-
-        # پیدا کردن فایل‌های Word استخراج شده
-        for file_path in extract_to.rglob("*"):
-            if file_path.is_file() and file_path.suffix.lower() in word_extensions:
-                word_files.append(file_path)
-
-    return word_files
+    # Zip Slip–safe extraction (rejects path traversal entries)
+    extracted_files = safe_extract_zip(zip_path, extract_to)
+    return [
+        path
+        for path in extracted_files
+        if path.is_file() and path.suffix.lower() in word_extensions
+    ]
 
 
 def ingest_folder(folder_path: Path, recursive: bool = True) -> List[Document]:

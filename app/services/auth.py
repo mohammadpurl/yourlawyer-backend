@@ -109,9 +109,6 @@ def get_current_user(
         status_code=401, detail="Could not validate credentials"
     )
     try:
-        print("token isssssssssss", token)
-        print(SECRET_KEY)
-        print(ALGORITHM)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str | None = payload.get("sub")
         if username is None:

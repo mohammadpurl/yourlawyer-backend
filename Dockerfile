@@ -25,8 +25,12 @@ RUN pip install --upgrade pip && \
 # کپی کد پروژه
 COPY . .
 
-# ایجاد دایرکتوری‌های لازم برای storage
-RUN mkdir -p /app/storage/chroma /app/data/uploads /app/storage
+# ایجاد دایرکتوری‌های لازم برای storage و کاربر غیرprivileged
+RUN mkdir -p /app/storage/chroma /app/data/uploads /app/storage && \
+    useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
 
 # Expose port
 EXPOSE 5000
@@ -37,4 +41,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 # Command برای اجرای uvicorn
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
-

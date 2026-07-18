@@ -3,11 +3,11 @@ from functools import partial
 from typing import Dict, Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_community.chat_models import ChatOpenAI
-from langchain_community.llms import Ollama
+from langchain_openai import ChatOpenAI
+from langchain_ollama import OllamaLLM
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda
-from langchain.memory import ConversationBufferMemory
+from langchain_classic.memory import ConversationBufferMemory
 
 from app.services.vectorstore import get_vectorstore
 from app.services.enhanced_retrieval import EnhancedRetriever
@@ -52,7 +52,7 @@ def _get_llm():
     if OPENAI_API_KEY:
         return ChatOpenAI(model="gpt-4o-mini", temperature=0)
     if OLLAMA_MODEL:
-        return Ollama(model=OLLAMA_MODEL, temperature=0)
+        return OllamaLLM(model=OLLAMA_MODEL, temperature=0)
     return None
 
 

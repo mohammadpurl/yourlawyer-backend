@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import PLAN_ADMIN_SECRET
 from app.core.database import get_db
 from app.models.user import User, PlanType
 from app.services.auth import get_current_user
@@ -37,10 +38,19 @@ def update_my_plan(
     payload: UpdatePlanRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    x_plan_admin_secret: str | None = Header(default=None),
 ):
     """
-    تغییر پلن کاربر
+    تغییر پلن کاربر — فقط با PLAN_ADMIN_SECRET (هدر X-Plan-Admin-Secret).
     """
+    if not PLAN_ADMIN_SECRET:
+        raise HTTPException(
+            status_code=403,
+            detail="تغییر پلن از طریق API غیرفعال است",
+        )
+    if not x_plan_admin_secret or x_plan_admin_secret != PLAN_ADMIN_SECRET:
+        raise HTTPException(status_code=403, detail="مجوز تغییر پلن وجود ندارد")
+
     try:
         updated_user = update_user_plan(current_user, payload.plan_type, db)
         status = get_user_plan_status(updated_user, db)

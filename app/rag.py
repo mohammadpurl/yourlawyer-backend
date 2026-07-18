@@ -1,8 +1,8 @@
 from typing import Dict, Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.chat_models import ChatOpenAI
-from langchain_community.llms import Ollama
+from langchain_openai import ChatOpenAI
+from langchain_ollama import OllamaLLM
 from langchain_core.output_parsers import StrOutputParser
 
 from .vectorstore import get_vectorstore
@@ -21,7 +21,7 @@ def _get_llm():
     if OPENAI_API_KEY:
         return ChatOpenAI(model="gpt-4o-mini", temperature=0)
     if OLLAMA_MODEL:
-        return Ollama(model=OLLAMA_MODEL, temperature=0)
+        return OllamaLLM(model=OLLAMA_MODEL, temperature=0)
     return None
 
 
@@ -44,7 +44,7 @@ def build_rag_chain(k: int = DEFAULT_TOP_K):
     if llm is None:
         # Fallback: return concatenated context as an extractive baseline
         def run_fallback(question: str):
-            docs = retriever.get_relevant_documents("query: " + question)
+            docs = retriever.invoke("query: " + question)
             context = "\n\n".join(d.page_content for d in docs)
             answer = (
                 "بر اساس متون یافت‌شده، موارد مرتبط در زیر آمده است. لطفاً با دقت مطالعه کنید و در صورت نیاز سوال را دقیق‌تر مطرح نمایید.\n\n"
@@ -62,7 +62,7 @@ def build_rag_chain(k: int = DEFAULT_TOP_K):
                 "question": x["question"],
                 "docs": get_vectorstore()
                 .as_retriever(search_kwargs={"k": k})
-                .get_relevant_documents("query: " + x["question"]),
+                .invoke("query: " + x["question"]),
             }
         )
         | (
@@ -83,7 +83,7 @@ def build_rag_chain(k: int = DEFAULT_TOP_K):
         docs = (
             get_vectorstore()
             .as_retriever(search_kwargs={"k": k})
-            .get_relevant_documents("query: " + question)
+            .invoke("query: " + question)
         )
         sources = [d.metadata.get("source", "") for d in docs]
         return {"answer": result_text, "sources": sources}
