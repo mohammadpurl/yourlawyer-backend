@@ -74,6 +74,8 @@ services:
       # Server Actions must call backend on Docker network (not through public nginx)
       - API_URL=${API_URL:-http://your-lowyer-backend:5000}
       - JWT_SERVER_SECRET=${JWT_SERVER_SECRET}
+      # Set to "true" only after TLS/HTTPS is enabled on nginx
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
     expose:
       - "8000"
     depends_on:
