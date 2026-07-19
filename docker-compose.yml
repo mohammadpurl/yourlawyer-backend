@@ -63,12 +63,15 @@ services:
       context: ../your-lowyer-frontEnd
       dockerfile: Dockerfile
       args:
-        - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL}
+        # Public URL for browser / client bundle (via nginx)
+        - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL:-http://yourlawyeer.ir/backend}
     container_name: your-lowyer-frontEnd
     restart: always
     environment:
-      - NODE_ENV=${NODE_ENV}
-      - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL}
+      - NODE_ENV=${NODE_ENV:-production}
+      - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL:-http://yourlawyeer.ir/backend}
+      # Server Actions must call backend on Docker network (not through public nginx)
+      - API_URL=${API_URL:-http://your-lowyer-backend:5000}
       - JWT_SERVER_SECRET=${JWT_SERVER_SECRET}
     expose:
       - "8000"
