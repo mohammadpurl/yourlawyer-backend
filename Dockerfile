@@ -28,9 +28,12 @@ COPY . .
 # ایجاد دایرکتوری‌های لازم برای storage و کاربر غیرprivileged
 RUN mkdir -p /app/storage/chroma /app/data/uploads /app/storage && \
     useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser && \
-    chown -R appuser:appuser /app
+    chown -R appuser:appuser /app && \
+    chmod +x /app/docker-entrypoint.sh
 
-USER appuser
+# Entrypoint runs as root briefly to chown mounted volumes, then drops to appuser
+USER root
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 
 # Expose port
 EXPOSE 5000

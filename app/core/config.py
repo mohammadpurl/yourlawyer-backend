@@ -9,12 +9,21 @@ os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+
+def _ensure_dir(path: Path) -> None:
+    """Create directory when possible; do not crash on read-only/root-owned mounts."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+
+
 # Storage directories
 PERSIST_DIRECTORY = Path(
     os.getenv("CHROMA_DB_DIR", BASE_DIR / "storage" / "chroma")
 ).as_posix()
 UPLOAD_DIRECTORY = Path(os.getenv("UPLOAD_DIR", BASE_DIR / "data" / "uploads"))
-UPLOAD_DIRECTORY.mkdir(parents=True, exist_ok=True)
+_ensure_dir(UPLOAD_DIRECTORY)
 
 # Database
 SQLALCHEMY_DATABASE_URL = os.getenv(
@@ -35,8 +44,8 @@ HF_TIMEOUT = int(
     os.getenv("HF_TIMEOUT", "600")
 )  # Timeout for Hugging Face downloads (seconds)
 HF_HOME = Path(os.getenv("HF_HOME", BASE_DIR / "storage" / "huggingface"))
-HF_HOME.mkdir(parents=True, exist_ok=True)
-LOCAL_EMBEDDING_MODEL_DIR.parent.mkdir(parents=True, exist_ok=True)
+_ensure_dir(HF_HOME)
+_ensure_dir(LOCAL_EMBEDDING_MODEL_DIR.parent)
 if "HF_HOME" not in os.environ:
     os.environ["HF_HOME"] = HF_HOME.as_posix()
 if "HUGGINGFACE_HUB_CACHE" not in os.environ:
