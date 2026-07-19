@@ -1,0 +1,4 @@
+# Place TLS certificate files here, e.g.:
+#   fullchain.pem
+#   privkey.pem
+# Referenced from nginx/default.conf as /etc/nginx/ssl/...
