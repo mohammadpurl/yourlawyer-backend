@@ -16,8 +16,9 @@ class PlanStatusResponse(BaseModel):
 
 
 class UpdatePlanRequest(BaseModel):
-    """درخواست تغییر پلن"""
+    """درخواست تغییر پلن توسط ادمین (admin.manage)"""
 
+    user_id: int = Field(..., description="شناسه کاربری که پلنش تغییر می‌کند")
     plan_type: PlanType = Field(..., description="نوع پلن جدید: free, silver, gold")
 
 

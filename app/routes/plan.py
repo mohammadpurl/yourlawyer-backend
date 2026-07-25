@@ -1,15 +1,14 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.core.config import PLAN_ADMIN_SECRET
 from app.core.database import get_db
+from app.core.permissions import require_admin_manage
 from app.models.user import User, PlanType
 from app.services.auth import get_current_user
 from app.services.plan import (
     get_user_plan_status,
     update_user_plan,
     get_plan_info,
-    PLAN_LIMITS,
 )
 from app.schemas.plan import (
     PlanStatusResponse,
@@ -26,33 +25,27 @@ def get_my_plan_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    دریافت وضعیت پلن کاربر فعلی
-    """
+    """دریافت وضعیت پلن کاربر فعلی"""
     status = get_user_plan_status(current_user, db)
     return PlanStatusResponse(**status)
 
 
 @router.put("/update", response_model=PlanStatusResponse)
-def update_my_plan(
+def update_user_plan_admin(
     payload: UpdatePlanRequest,
-    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
-    x_plan_admin_secret: str | None = Header(default=None),
+    admin: User = Depends(require_admin_manage),
 ):
     """
-    تغییر پلن کاربر — فقط با PLAN_ADMIN_SECRET (هدر X-Plan-Admin-Secret).
+    تغییر پلن یک کاربر — فقط با permission ``admin.manage`` (کاربر is_admin).
+    بدون secret header موازی.
     """
-    if not PLAN_ADMIN_SECRET:
-        raise HTTPException(
-            status_code=403,
-            detail="تغییر پلن از طریق API غیرفعال است",
-        )
-    if not x_plan_admin_secret or x_plan_admin_secret != PLAN_ADMIN_SECRET:
-        raise HTTPException(status_code=403, detail="مجوز تغییر پلن وجود ندارد")
+    target = db.query(User).filter(User.id == payload.user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="کاربر یافت نشد")
 
     try:
-        updated_user = update_user_plan(current_user, payload.plan_type, db)
+        updated_user = update_user_plan(target, payload.plan_type, db)
         status = get_user_plan_status(updated_user, db)
         return PlanStatusResponse(**status)
     except Exception as e:
@@ -61,9 +54,7 @@ def update_my_plan(
 
 @router.get("/all", response_model=AllPlansResponse)
 def get_all_plans():
-    """
-    دریافت لیست تمام پلن‌های موجود
-    """
+    """دریافت لیست تمام پلن‌های موجود"""
     plans = []
     for plan_type in PlanType:
         plan_info = get_plan_info(plan_type)

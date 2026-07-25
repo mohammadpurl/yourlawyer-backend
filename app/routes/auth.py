@@ -18,6 +18,7 @@ from app.services.auth import (
     create_user,
     create_access_token,
     get_current_user,
+    sync_admin_flag,
 )
 from app.services.otp import generate_otp, verify_otp, send_sms_real
 from app.models.user import User
@@ -70,6 +71,8 @@ def otp_verify(
             suffix += 1
             username = f"{base_username}_{suffix}"
         user = create_user(db, username=username, mobile=payload.mobile)
+
+    user = sync_admin_flag(user, db)
 
     # Build session and token with aligned expiry
     now = datetime.now(timezone.utc)

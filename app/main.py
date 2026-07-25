@@ -10,7 +10,11 @@ from app.routes.auth import router as auth_router
 from app.routes.rag import router as rag_router
 from app.routes.conversation import router as conversation_router
 from app.routes.plan import router as plan_router
-from app.core.database import Base, engine
+from app.routes.quota_admin import router as quota_admin_router
+from app.routes.templates import router as templates_router
+from app.routes.admin_templates import router as admin_templates_router
+from app.routes.sample_documents import router as sample_documents_router
+from app.core.database import Base, engine, SessionLocal
 from app.core.logging import configure_logging
 from app.core.monitoring import init_sentry
 from app.core.config import (
@@ -24,7 +28,10 @@ from app.core.rate_limit import setup_rate_limiting
 
 # Import models to ensure they are registered in metadata
 import app.models.user  # noqa: F401
-
+import app.models.usage  # noqa: F401
+import app.models.template  # noqa: F401
+import app.models.citation  # noqa: F401
+import app.models.sample_document  # noqa: F401
 
 configure_logging()
 init_sentry()
@@ -87,9 +94,36 @@ def _configure_openapi(application: FastAPI) -> None:
 async def lifespan(application: FastAPI):
     """Application lifespan: create DB tables and configure OpenAPI on startup."""
     Base.metadata.create_all(bind=engine)
+    _ensure_runtime_schema()
+    try:
+        from app.services.quota import ensure_default_quotas
+
+        db = SessionLocal()
+        try:
+            ensure_default_quotas(db)
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Failed to seed default usage quotas")
     _configure_openapi(application)
     logger.info("Startup completed: database tables ensured")
     yield
+
+
+def _ensure_runtime_schema() -> None:
+    """Add columns that create_all will not alter on existing tables."""
+    from sqlalchemy import text
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE users "
+                    "ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE"
+                )
+            )
+    except Exception:
+        logger.exception("Failed to ensure users.is_admin column")
 
 
 app = FastAPI(
@@ -343,6 +377,10 @@ app.include_router(auth_router)
 app.include_router(rag_router)
 app.include_router(conversation_router)
 app.include_router(plan_router)
+app.include_router(quota_admin_router)
+app.include_router(templates_router)
+app.include_router(admin_templates_router)
+app.include_router(sample_documents_router)
 
 
 @app.exception_handler(HTTPException)

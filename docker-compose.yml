@@ -10,27 +10,44 @@ services:
     # Postgres only reachable inside Docker network (not exposed to internet)
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./postgres-init:/docker-entrypoint-initdb.d
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: yourlawyer_redis
+    restart: always
+    # No host ports — internal Docker network only
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   your-lowyer-backend:
     build:
-      context: ../yourlawyer-backend
+      context: .
       dockerfile: Dockerfile
     container_name: yourLawyer_fastapi_app
     restart: always
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
-      # Prefer OPENAI_API_KEY; YOURLAWYER_OPENAI_API_KEY kept as alias
       - OPENAI_API_KEY=${OPENAI_API_KEY:-${YOURLAWYER_OPENAI_API_KEY:-}}
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_PORT=5432
@@ -38,6 +55,7 @@ services:
       - PORT=5000
       - ROOT_PATH=/backend
       - CHROMA_DB_DIR=/app/storage/chroma
+      - HF_HOME=/app/storage/huggingface
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - SECRET_KEY=${SECRET_KEY}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
@@ -49,33 +67,40 @@ services:
       - OTP_API_KEY=${OTP_API_KEY}
       - OTP_TEMPLATE_ID=${OTP_TEMPLATE_ID}
       - OTP_URL=${OTP_URL:-https://api.sms.ir/v1/send/verify}
-      - PLAN_ADMIN_SECRET=${PLAN_ADMIN_SECRET:-}
+      - ADMIN_MOBILES=${ADMIN_MOBILES:-}
+      - DOCS_ENABLED=${DOCS_ENABLED:-false}
+      - REDIS_URL=redis://redis:6379/0
+      - REDIS_ENABLED=${REDIS_ENABLED:-true}
+      - QUOTA_ENABLED=${QUOTA_ENABLED:-true}
+      - QUOTA_FAIL_CLOSED=${QUOTA_FAIL_CLOSED:-true}
+      - QUOTA_DEFAULT_GLOBAL_USD=${QUOTA_DEFAULT_GLOBAL_USD:-50}
+      - QUOTA_DEFAULT_USER_USD=${QUOTA_DEFAULT_USER_USD:-5}
+      - DEFAULT_LLM_MODEL=${DEFAULT_LLM_MODEL:-gpt-4o-mini}
     expose:
       - "5000"
     volumes:
-      - ../yourlawyer-backend/data:/app/data
-      - ../yourlawyer-backend/storage/chroma:/app/storage/chroma
-      - ../yourlawyer-backend/storage/models:/app/storage/models
+      - ./data:/app/data
+      - ./storage/chroma:/app/storage/chroma
+      - ./storage/models:/app/storage/models
+      - ./storage/huggingface:/app/storage/huggingface
     networks:
       - app-network
 
   your-lowyer-frontend:
     build:
-      context: ../your-lowyer-frontEnd
+      context: ../your-lawyer-front-next
       dockerfile: Dockerfile
       args:
-        # Public URL for browser / client bundle (via nginx)
-        - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL:-http://yourlawyeer.ir/backend}
+        - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL:-https://yourlawyeer.ir/backend}
     container_name: your-lowyer-frontEnd
     restart: always
     environment:
       - NODE_ENV=${NODE_ENV:-production}
-      - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL:-http://yourlawyeer.ir/backend}
-      # Server Actions must call backend on Docker network (not through public nginx)
+      - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL:-https://yourlawyeer.ir/backend}
+      # Server Actions call backend on Docker network (not public nginx)
       - API_URL=${API_URL:-http://your-lowyer-backend:5000}
       - JWT_SERVER_SECRET=${JWT_SERVER_SECRET}
-      # Set to "true" only after TLS/HTTPS is enabled on nginx
-      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - COOKIE_SECURE=${COOKIE_SECURE:-true}
     expose:
       - "8000"
     depends_on:
@@ -101,6 +126,7 @@ services:
 
 volumes:
   db_data:
+  redis_data:
 
 networks:
   app-network:

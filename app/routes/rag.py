@@ -35,6 +35,7 @@ from app.services.folder_ingestion import (
 from app.services.vectorstore import add_documents, stats, get_stored_sources
 from app.services.rag import build_rag_chain
 from app.services.plan import check_user_can_ask_question, increment_user_question_count
+from app.dependencies.quota import check_quota
 from app.schemas.rag import (
     AskRequest,
     AskResponse,
@@ -304,7 +305,7 @@ async def ask(
     request: Request,
     req: AskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(check_quota),
 ):
     """
     ارسال سوال به سیستم RAG. اگر conversation_id ارسال شود، سوال و پاسخ به صورت خودکار ذخیره می‌شوند.
@@ -312,14 +313,18 @@ async def ask(
     import logging
 
     logger = logging.getLogger(__name__)
+    from app.core.pii_anonymizer import get_pii_anonymizer
+
     logger.info(
         "RAG /ask received",
         extra={
             "conversation_id": req.conversation_id,
             "top_k": req.top_k,
             "use_enhanced": req.use_enhanced_retrieval,
-            # برای حفظ حریم، فقط بخشی از سوال لاگ می‌شود
-            "question_preview": (req.question or "")[:200],
+            # Log anonymized preview only — never raw PII
+            "question_preview": get_pii_anonymizer().anonymize_for_logging(
+                req.question or "", max_len=200
+            ),
         },
     )
 
@@ -402,7 +407,12 @@ async def ask(
 
     try:
         rag = build_rag_chain(
-            k=k, use_enhanced_retrieval=use_enhanced, memory=memory, use_reranking=True
+            k=k,
+            use_enhanced_retrieval=use_enhanced,
+            memory=memory,
+            use_reranking=True,
+            user=current_user,
+            db=db,
         )
         # Run RAG in thread pool to avoid blocking
         import asyncio

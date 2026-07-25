@@ -13,44 +13,58 @@ from app.services.vectorstore import get_vectorstore
 from app.services.enhanced_retrieval import EnhancedRetriever
 from app.services.question_classifier import classify_question, get_domain_label
 from app.services.reranker import rerank_documents
-from app.core.config import DEFAULT_TOP_K, OPENAI_API_KEY, OLLAMA_MODEL
+from app.core.config import (
+    DEFAULT_TOP_K,
+    OPENAI_API_KEY,
+    OLLAMA_MODEL,
+    DEFAULT_LLM_MODEL,
+    LLM_MAX_COMPLETION_TOKENS,
+)
 from app.core.cache import (
     cache_rag_result,
     get_cached_rag_result,
     cache_classification,
     get_cached_classification,
 )
+from app.core.pii_anonymizer import get_pii_anonymizer
+from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
+from sqlalchemy.orm import Session
+
+from app.models.user import User
+from app.services.llm import call_llm_with_quota_check
+from app.services.quota import QuotaExceeded
+from app.services.citation_validator import (
+    validate_citations,
+    citation_accuracy_score,
+)
+from app.services.citation_quality import persist_citation_quality_log
+from app.services.response_warnings import prepend_strong_warning
+from fastapi import HTTPException
 
 
 PERSIAN_LEGAL_SYSTEM_PROMPT = """
-شما یک دستیار حقوقی متخصص و باتجربه در قوانین و مقررات جمهوری اسلامی ایران هستید.
+شما یک دستیار حقوقی متخصص در قوانین و مقررات جمهوری اسلامی ایران هستید.
 
-وظایف شما:
-1. تحلیل دقیق سوال کاربر و شناسایی حوزه حقوقی مرتبط (کیفری، مدنی، خانواده، تجاری)
-2. استخراج و ارائه اطلاعات دقیق از متون قانونی بازیابی‌شده
-3. ارائه پاسخ مستند با ذکر دقیق مواد قانونی، اصول و مقررات مرتبط
-4. در صورت عدم قطعیت، صراحتاً بیان کنید که پاسخ بر اساس مدارک موجود است و ممکن است نیاز به مشورت با وکیل داشته باشد
-
-قوانین پاسخ‌دهی:
-- فقط بر اساس متون بازیابی‌شده پاسخ بده و از حدس زدن یا اطلاعات خارج از متن خودداری کن
-- همیشه مواد قانونی، شماره اصل، نام قانون و منبع را به صورت دقیق ذکر کن
-- اگر اطلاعات کافی نیست، صادقانه بگو که نیاز به اطلاعات بیشتر است
-- پاسخ را به زبان فارسی رسمی، واضح و قابل فهم بنویس
-- در پایان، فهرست کاملی از منابع و مواد قانونی استفاده شده را ارائه کن
+محدودیت‌های اجباری (Citation Grounding):
+- تو فقط باید بر اساس متن‌های ارائه‌شده در بخش «منابع بازیابی‌شده» پاسخ بدهی.
+- هرگز از دانش عمومی یا حافظه خودت درباره قوانین ایران استفاده نکن.
+- اگر اطلاعات کافی در منابع ارائه‌شده برای پاسخ به این سؤال وجود ندارد،
+  دقیقاً همین جمله را بگو: «اطلاعات کافی در منابع موجود برای پاسخ دقیق به این سؤال یافت نشد.»
+- هر جا به ماده یا تبصره قانونی اشاره می‌کنی، شماره دقیق آن را از متن منبع نقل کن،
+  نه از حافظه خودت.
+- اگر در سوال placeholderهایی مانند [PII_NAME_1] دیدی، آن‌ها را عیناً در پاسخ نگه دار.
 
 فرمت پاسخ:
-- ابتدا پاسخ اصلی را به صورت خلاصه و واضح ارائه کن
-- سپس جزئیات و استدلال‌های حقوقی را شرح بده
-- در پایان، فهرست منابع را به این صورت ارائه کن:
-  * ماده X قانون Y
-  * اصل Z قانون اساسی
-  * منبع: [نام فایل/سند]
+- ابتدا پاسخ اصلی را خلاصه و واضح ارائه کن
+- سپس جزئیات و استدلال حقوقی بر اساس منابع
+- در پایان فهرست منابع/مواد ذکرشده در متن منابع بازیابی‌شده را بیاور
 """.strip()
 
 
 def _get_llm():
     if OPENAI_API_KEY:
-        return ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        # Kept for Ollama/fallback detection; OpenAI path goes through quota wrapper.
+        return ChatOpenAI(model=DEFAULT_LLM_MODEL, temperature=0)
     if OLLAMA_MODEL:
         return OllamaLLM(model=OLLAMA_MODEL, temperature=0)
     return None
@@ -70,14 +84,46 @@ def _extract_citations(answer: str, docs: list) -> list[str]:
     return sources
 
 
+def _anonymize_chat_history(
+    history_messages: list, anonymizer
+) -> tuple[list, list]:
+    """Anonymize memory messages for LLM; return new messages + mappings."""
+    if not history_messages:
+        return [], []
+
+    contents = [getattr(m, "content", "") or "" for m in history_messages]
+    anon_contents, mappings = anonymizer.anonymize_many(contents)
+    anon_messages: list[BaseMessage] = []
+    for msg, anon_content in zip(history_messages, anon_contents):
+        if isinstance(msg, HumanMessage) or getattr(msg, "type", None) == "human":
+            anon_messages.append(HumanMessage(content=anon_content))
+        elif isinstance(msg, AIMessage) or getattr(msg, "type", None) == "ai":
+            anon_messages.append(AIMessage(content=anon_content))
+        else:
+            try:
+                anon_messages.append(msg.__class__(content=anon_content))
+            except Exception:
+                anon_messages.append(HumanMessage(content=anon_content))
+    return anon_messages, mappings
+
+
 def build_rag_chain(
     k: int = DEFAULT_TOP_K,
     use_enhanced_retrieval: bool = True,
     memory: Optional[ConversationBufferMemory] = None,
     use_reranking: bool = True,
+    user: Optional[User] = None,
+    db: Optional[Session] = None,
 ):
-    """Build RAG chain with optional enhanced retrieval, reranking, and conversation memory."""
+    """Build RAG chain with optional enhanced retrieval, reranking, and conversation memory.
+
+    When OpenAI is used, generation goes through ``call_llm_with_quota_check``
+    (requires ``user`` + ``db``). Classify/rerank today are local (zero OpenAI cost);
+    if they later call paid models, route them through the same wrapper with
+    pipeline_stage='classify'|'rerank'.
+    """
     llm = _get_llm()
+    use_openai = bool(OPENAI_API_KEY)
 
     # Initialize retrievers outside of closures to avoid cell issues
     if use_enhanced_retrieval:
@@ -90,25 +136,23 @@ def build_rag_chain(
 
     # ساخت prompt با پشتیبانی از memory
     if memory:
-        # اگر memory داریم، از MessagesPlaceholder استفاده می‌کنیم
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", PERSIAN_LEGAL_SYSTEM_PROMPT),
                 MessagesPlaceholder(variable_name="chat_history"),
                 (
                     "human",
-                    "سوال: {question}\n\nمتون بازیابی‌شده:\n{context}\n\nپاسخ دقیق و مستند:",
+                    "سوال: {question}\n\nمنابع بازیابی‌شده:\n{context}\n\nپاسخ دقیق و مستند:",
                 ),
             ]
         )
     else:
-        # بدون memory، prompt ساده
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", PERSIAN_LEGAL_SYSTEM_PROMPT),
                 (
                     "human",
-                    "سوال: {question}\n\nمتون بازیابی‌شده:\n{context}\n\nپاسخ دقیق و مستند:",
+                    "سوال: {question}\n\nمنابع بازیابی‌شده:\n{context}\n\nپاسخ دقیق و مستند:",
                 ),
             ]
         )
@@ -117,19 +161,20 @@ def build_rag_chain(
 
         def run_fallback(question: str):
             start_time = time.time()
+            anonymizer = get_pii_anonymizer()
+            anon_question, mappings = anonymizer.anonymize(question)
 
             if use_enhanced_retrieval and enhanced_retriever:
                 docs, domain, confidence = (
-                    enhanced_retriever.retrieve_with_classification(question, k=k)
+                    enhanced_retriever.retrieve_with_classification(anon_question, k=k)
                 )
             elif retriever:
-                docs = retriever.invoke("query: " + question)
+                docs = retriever.invoke("query: " + anon_question)
                 domain, confidence = None, 0.0
             else:
-                # Fallback: create a basic retriever
                 vs = get_vectorstore()
                 basic_retriever = vs.as_retriever(search_kwargs={"k": k})
-                docs = basic_retriever.invoke("query: " + question)
+                docs = basic_retriever.invoke("query: " + anon_question)
                 domain, confidence = None, 0.0
 
             context = "\n\n".join(d.page_content for d in docs)
@@ -138,6 +183,7 @@ def build_rag_chain(
                 "بر اساس متون یافت‌شده، موارد مرتبط در زیر آمده است. لطفاً با دقت مطالعه کنید و در صورت نیاز سوال را دقیق‌تر مطرح نمایید.\n\n"
                 + context
             )
+            answer = anonymizer.restore(answer, mappings)
 
             elapsed = time.time() - start_time
             return {
@@ -150,7 +196,6 @@ def build_rag_chain(
 
         return run_fallback
 
-    # Create a helper function that accepts retrievers as parameters to avoid closure issues
     def _retrieve_docs(
         question: str,
         k_val: int,
@@ -160,7 +205,6 @@ def build_rag_chain(
         use_rerank: bool = True,
     ):
         """Retrieve documents based on configuration."""
-        # Retrieve more documents if reranking is enabled (to get better candidates)
         retrieve_k = k_val * 2 if use_rerank else k_val
 
         if use_enhanced and enh_retriever:
@@ -171,13 +215,12 @@ def build_rag_chain(
             docs = std_retriever.invoke("query: " + question)
             domain, confidence = None, 0.0
         else:
-            # Fallback
             vs = get_vectorstore()
             basic_retriever = vs.as_retriever(search_kwargs={"k": retrieve_k})
             docs = basic_retriever.invoke("query: " + question)
             domain, confidence = None, 0.0
 
-        # Apply reranking if enabled
+        # Local CrossEncoder — no OpenAI cost today
         if use_rerank and docs:
             docs = rerank_documents(question, docs, top_k=k_val)
 
@@ -204,10 +247,8 @@ def build_rag_chain(
         context = "\n\n".join(d.page_content for d in docs)
         x["context"] = context
         x["retrieved_docs"] = docs
-        # توجه: history از memory مستقیماً در run function خوانده می‌شود
         return x
 
-    # Use partial to bind parameters and avoid closure variable issues
     _prepare_inputs_bound = partial(
         _prepare_inputs,
         k_val=k,
@@ -218,82 +259,122 @@ def build_rag_chain(
         use_rerank=use_reranking,
     )
 
-    chain = RunnableLambda(_prepare_inputs_bound) | prompt | llm | StrOutputParser()
-
     def run(question: str) -> Dict[str, Any]:
         start_time = time.time()
+        anonymizer = get_pii_anonymizer()
+        anon_question, mappings = anonymizer.anonymize(question)
 
-        # Check cache first
-        cache_key_params = (question, k, use_enhanced_retrieval)
-        cached_result = get_cached_rag_result(question, k, use_enhanced_retrieval)
+        cached_result = get_cached_rag_result(
+            anon_question, k, use_enhanced_retrieval
+        )
         if cached_result:
             import logging
 
             logger = logging.getLogger(__name__)
-            logger.info(f"Cache hit for question: {question[:50]}...")
-            return cached_result
+            logger.info(
+                "Cache hit for question: %s...",
+                anonymizer.anonymize_for_logging(question, max_len=50),
+            )
+            cached = dict(cached_result)
+            if isinstance(cached.get("answer"), str):
+                cached["answer"] = anonymizer.restore(cached["answer"], mappings)
+            return cached
 
-        # Prepare inputs (includes retrieval and memory)
-        inputs = {"question": question}
+        inputs = {"question": anon_question}
         prepared = _prepare_inputs_bound(inputs)
         docs = prepared.get("retrieved_docs", [])
 
-        # Generate answer with memory context
-        chain_inputs = {
-            "question": question,
+        chain_inputs: Dict[str, Any] = {
+            "question": anon_question,
             "context": prepared.get("context", ""),
         }
-        # اضافه کردن history اگر memory وجود داشته باشد (مستقیماً از memory بخوانیم)
         if memory:
-            # باید history را مستقیماً از memory بخوانیم (نه از prepared)
-            # چون memory ممکن است بعد از prepared به‌روز شده باشد
             history_messages = memory.chat_memory.messages
-            chain_inputs["chat_history"] = history_messages
-            # لاگ برای دیباگ (می‌توانید بعداً حذف کنید)
-            import logging
+            anon_history, history_maps = _anonymize_chat_history(
+                history_messages, anonymizer
+            )
+            mappings = list(mappings) + list(history_maps)
+            chain_inputs["chat_history"] = anon_history
 
-            logger = logging.getLogger(__name__)
-            logger.info(f"Memory history contains {len(history_messages)} messages")
+        # Format prompt → messages, then billable generate via quota wrapper
+        messages = prompt.format_messages(**chain_inputs)
 
-        result_text = chain.invoke(chain_inputs)
+        if use_openai:
+            if user is None or db is None:
+                raise HTTPException(
+                    status_code=500,
+                    detail="پیکربندی ناقص محدودیت مصرف برای فراخوانی مدل",
+                )
+            try:
+                result_text = call_llm_with_quota_check(
+                    messages=messages,
+                    user=user,
+                    db=db,
+                    model=DEFAULT_LLM_MODEL,
+                    pipeline_stage="generate",
+                    max_completion_tokens=LLM_MAX_COMPLETION_TOKENS,
+                )
+            except HTTPException:
+                raise
+            except QuotaExceeded as e:
+                raise HTTPException(status_code=e.status_code, detail=e.message) from e
+        else:
+            # Local Ollama — no USD quota
+            ollama_chain = prompt | llm | StrOutputParser()
+            result_text = ollama_chain.invoke(chain_inputs)
 
-        # توجه: سوال و پاسخ در دیتابیس ذخیره می‌شوند
-        # memory فقط برای این درخواست استفاده می‌شود و بعد از آن از بین می‌رود
-        # دفعه بعد که کاربر سوال بپرسد، memory دوباره از دیتابیس ساخته می‌شود
-
-        # Extract citations
         sources = _extract_citations(result_text, docs)
-
-        # Calculate metrics
         elapsed = time.time() - start_time
-        citation_count = len(sources)
-        has_citations = citation_count > 0
 
-        # Check if answer contains citations (simple heuristic)
-        answer_has_citations = any(
-            keyword in result_text
-            for keyword in ["ماده", "اصل", "قانون", "منبع", "منابع"]
-        )
-        citation_accuracy = 1.0 if (has_citations and answer_has_citations) else 0.5
+        chunk_texts = [getattr(d, "page_content", "") or "" for d in docs]
+        citation_result = validate_citations(result_text, chunk_texts)
+        citation_accuracy = citation_accuracy_score(citation_result)
 
-        response = {
+        if (
+            citation_result.confidence_flag == "unverified"
+            and citation_result.cited_articles
+        ):
+            result_text = prepend_strong_warning(
+                result_text, reason="citation_unverified"
+            )
+        elif citation_result.confidence_flag == "partial":
+            result_text = prepend_strong_warning(
+                result_text, reason="partial_citation"
+            )
+
+        if db is not None:
+            persist_citation_quality_log(
+                db,
+                result=citation_result,
+                user_id=getattr(user, "id", None) if user else None,
+            )
+
+        cached_payload = {
             "answer": result_text,
             "sources": sources,
             "response_time_seconds": round(elapsed, 3),
-            "citation_count": citation_count,
+            "citation_count": len(citation_result.cited_articles),
             "citation_accuracy": citation_accuracy,
+            "citation_confidence": citation_result.confidence_flag,
+            "cited_articles": citation_result.cited_articles,
+            "unverified_citations": citation_result.unverified_citations,
         }
 
         if use_enhanced_retrieval:
             domain = prepared.get("detected_domain")
             confidence = prepared.get("domain_confidence", 0.0)
-            response["domain"] = domain.value if domain else None
-            response["domain_label"] = get_domain_label(domain) if domain else None
-            response["domain_confidence"] = round(confidence, 2)
+            cached_payload["domain"] = domain.value if domain else None
+            cached_payload["domain_label"] = (
+                get_domain_label(domain) if domain else None
+            )
+            cached_payload["domain_confidence"] = round(confidence, 2)
 
-        # Cache the result
-        cache_rag_result(question, k, use_enhanced_retrieval, response, ttl=3600)
+        cache_rag_result(
+            anon_question, k, use_enhanced_retrieval, cached_payload, ttl=3600
+        )
 
+        response = dict(cached_payload)
+        response["answer"] = anonymizer.restore(result_text, mappings)
         return response
 
     return run

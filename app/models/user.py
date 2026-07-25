@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Text,
     Date,
+    Boolean,
     Enum as SQLEnum,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -48,6 +49,13 @@ class User(Base):
     questions_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     plan_reset_date: Mapped[date | None] = mapped_column(
         Date, nullable=True, index=True
+    )
+    # Grants permission admin.manage (plan/quota admin APIs)
+    is_admin: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        server_default="false",
     )
 
     # Relationships

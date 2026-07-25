@@ -20,19 +20,30 @@ def test_extract_citations():
 
 
 def test_prompt_content():
-    """Test that prompt contains required elements."""
-    assert "دستیار حقوقی" in PERSIAN_LEGAL_SYSTEM_PROMPT
-    assert "مواد قانونی" in PERSIAN_LEGAL_SYSTEM_PROMPT
-    assert "منبع" in PERSIAN_LEGAL_SYSTEM_PROMPT
+    """Test that prompt contains grounding constraints."""
+    assert "منابع" in PERSIAN_LEGAL_SYSTEM_PROMPT or "بازیابی" in PERSIAN_LEGAL_SYSTEM_PROMPT
+    assert "دانش عمومی" in PERSIAN_LEGAL_SYSTEM_PROMPT or "حافظه" in PERSIAN_LEGAL_SYSTEM_PROMPT
+    assert "اطلاعات کافی در منابع موجود" in PERSIAN_LEGAL_SYSTEM_PROMPT
 
 
-def test_build_rag_chain():
-    """Test RAG chain building."""
-    # Test without LLM (fallback mode)
+def test_build_rag_chain(monkeypatch):
+    """Test RAG chain building without loading embedding models."""
+    from langchain_core.documents import Document as LCDocument
+
+    class _FakeVS:
+        def as_retriever(self, search_kwargs=None):
+            class _R:
+                def invoke(self, q):
+                    return [LCDocument(page_content="test", metadata={"source": "a.pdf"})]
+
+            return _R()
+
+    monkeypatch.setattr("app.services.rag.get_vectorstore", lambda: _FakeVS())
+    monkeypatch.setattr("app.services.rag.OPENAI_API_KEY", None)
+    monkeypatch.setattr("app.services.rag.OLLAMA_MODEL", None)
+
     chain = build_rag_chain(k=3, use_enhanced_retrieval=False, use_reranking=False)
     assert callable(chain)
-    
-    # Test that it returns a function
     assert hasattr(chain, "__call__")
 
 

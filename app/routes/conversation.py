@@ -18,6 +18,7 @@ from app.services.auth import get_current_user
 from app.services.rag import build_rag_chain
 from app.services.memory import create_memory_from_messages
 from app.services.plan import check_user_can_ask_question, increment_user_question_count
+from app.dependencies.quota import check_quota
 
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -84,7 +85,7 @@ def ask_in_conversation(
     conversation_id: int,
     payload: ChatRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(check_quota),
 ):
     """
     ارسال یک سوال در دل یک گفتگو؛ سوال و پاسخ به صورت پیام ذخیره می‌شوند
@@ -93,13 +94,17 @@ def ask_in_conversation(
     import logging
 
     logger = logging.getLogger(__name__)
+    from app.core.pii_anonymizer import get_pii_anonymizer
+
     logger.info(
         "Conversation /ask received",
         extra={
             "conversation_id": conversation_id,
             "top_k": payload.top_k,
             "use_enhanced": payload.use_enhanced_retrieval,
-            "question_preview": (payload.question or "")[:200],
+            "question_preview": get_pii_anonymizer().anonymize_for_logging(
+                payload.question or "", max_len=200
+            ),
         },
     )
     conv = (
@@ -151,7 +156,13 @@ def ask_in_conversation(
         if payload.use_enhanced_retrieval is not None
         else True
     )
-    rag = build_rag_chain(k=k, use_enhanced_retrieval=use_enhanced, memory=memory)
+    rag = build_rag_chain(
+        k=k,
+        use_enhanced_retrieval=use_enhanced,
+        memory=memory,
+        user=current_user,
+        db=db,
+    )
 
     # ارسال سوال (memory به صورت خودکار history + سوال جدید را به مدل می‌فرستد)
     result: AskResponse | dict = rag(payload.question)  # type: ignore[assignment]

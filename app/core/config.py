@@ -61,6 +61,13 @@ if "HF_HUB_DOWNLOAD_TIMEOUT_S" not in os.environ:
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 
+# PII anonymization (before external LLM calls)
+PII_ANONYMIZATION_ENABLED = (
+    os.getenv("PII_ANONYMIZATION_ENABLED", "true").lower() == "true"
+)
+# Optional hazm-based NER for person names (off by default)
+PII_NER_ENABLED = os.getenv("PII_NER_ENABLED", "false").lower() == "true"
+
 # Retrieval defaults
 DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "5"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
@@ -74,8 +81,13 @@ RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-
 SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
-# Required to change user plans via API (header: X-Plan-Admin-Secret)
-PLAN_ADMIN_SECRET = os.getenv("PLAN_ADMIN_SECRET", "")
+
+# Bootstrap admins by mobile (comma-separated). Grants permission admin.manage.
+# Prefer this over a shared PLAN_ADMIN_SECRET header.
+_admin_mobiles_raw = os.getenv("ADMIN_MOBILES", "")
+ADMIN_MOBILES: List[str] = [
+    m.strip() for m in _admin_mobiles_raw.split(",") if m.strip()
+]
 
 # CORS
 ALLOWED_ORIGINS = os.getenv(
@@ -86,6 +98,14 @@ ALLOWED_ORIGINS = os.getenv(
 # Redis
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
+
+# Usage quota (monthly USD cost ceilings)
+QUOTA_ENABLED = os.getenv("QUOTA_ENABLED", "true").lower() == "true"
+QUOTA_FAIL_CLOSED = os.getenv("QUOTA_FAIL_CLOSED", "true").lower() == "true"
+QUOTA_DEFAULT_GLOBAL_USD = float(os.getenv("QUOTA_DEFAULT_GLOBAL_USD", "50"))
+QUOTA_DEFAULT_USER_USD = float(os.getenv("QUOTA_DEFAULT_USER_USD", "5"))
+DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
+LLM_MAX_COMPLETION_TOKENS = int(os.getenv("LLM_MAX_COMPLETION_TOKENS", "1024"))
 
 # Rate Limiting
 RATE_LIMIT_ENABLED = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"

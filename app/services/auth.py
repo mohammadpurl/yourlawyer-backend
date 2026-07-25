@@ -95,10 +95,42 @@ def create_user(
         plan_type=PlanType.FREE,
         questions_used=0,
         plan_reset_date=reset_date,
+        is_admin=_mobile_in_admin_allowlist(mobile),
     )
     db.add(user)
     db.commit()
     db.refresh(user)
+    return user
+
+
+def _normalize_mobile(mobile: str | None) -> str:
+    if not mobile:
+        return ""
+    return "".join(ch for ch in mobile.strip() if ch.isdigit() or ch == "+")
+
+
+def _mobile_in_admin_allowlist(mobile: str | None) -> bool:
+    from app.core.config import ADMIN_MOBILES
+
+    if not mobile or not ADMIN_MOBILES:
+        return False
+    normalized = _normalize_mobile(mobile)
+    allow = {_normalize_mobile(m) for m in ADMIN_MOBILES}
+    # Also compare last 10 digits (09xxxxxxxxx) for +98 variants
+    def tail10(value: str) -> str:
+        digits = "".join(ch for ch in value if ch.isdigit())
+        return digits[-10:] if len(digits) >= 10 else digits
+
+    return normalized in allow or tail10(normalized) in {tail10(a) for a in allow}
+
+
+def sync_admin_flag(user: User, db: Session) -> User:
+    """Keep user.is_admin aligned with ADMIN_MOBILES allowlist."""
+    should_be_admin = _mobile_in_admin_allowlist(user.mobile)
+    if bool(user.is_admin) != should_be_admin:
+        user.is_admin = should_be_admin
+        db.commit()
+        db.refresh(user)
     return user
 
 

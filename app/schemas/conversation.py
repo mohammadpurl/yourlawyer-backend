@@ -44,6 +44,9 @@ class ChatResponse(BaseModel):
     response_time_seconds: Optional[float] = None
     citation_count: Optional[int] = None
     citation_accuracy: Optional[float] = None
+    citation_confidence: Optional[str] = None
+    cited_articles: List[str] = []
+    unverified_citations: List[str] = []
     domain: Optional[str] = None
     domain_label: Optional[str] = None
     domain_confidence: Optional[float] = None
