@@ -32,6 +32,7 @@ INDEX_FILES: dict[str, str] = {
     "outputs_solh_confirmation": "confirmation_index.json",
     "outputs_solh_declaration": "declaration_index.json",
     "outputs_solh_company_statute": "company_statute_index.json",
+    "outputs_prisoner_requests": "prisoner_requests_index.json",
 }
 
 

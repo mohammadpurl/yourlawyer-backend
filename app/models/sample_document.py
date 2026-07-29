@@ -19,6 +19,7 @@ class SampleDocType(str, enum.Enum):
     CONFIRMATION = "confirmation"
     DECLARATION = "declaration"
     COMPANY_STATUTE = "company_statute"
+    PRISONER_REQUEST = "prisoner_request"
 
 
 class SampleDocument(Base):

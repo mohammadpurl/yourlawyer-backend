@@ -52,6 +52,11 @@ DOC_TYPE_META: list[dict[str, str]] = [
         "label": "اساسنامه / ثبت شرکت",
         "folder": "outputs_solh_company_statute",
     },
+    {
+        "doc_type": SampleDocType.PRISONER_REQUEST.value,
+        "label": "درخواست‌های زندانیان",
+        "folder": "outputs_prisoner_requests",
+    },
 ]
 
 _WS_RE = re.compile(r"[\s\u200c\u200f\u202a-\u202e]+")
