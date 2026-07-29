@@ -88,7 +88,7 @@ services:
 
   your-lowyer-frontend:
     build:
-      context: ../your-lawyer-front-next
+      context: ../your-lowyer-frontEnd
       dockerfile: Dockerfile
       args:
         - NEXT_PUBLIC_API_URL=${NEW_NEXT_PUBLIC_API_URL:-https://yourlawyeer.ir/backend}
