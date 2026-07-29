@@ -134,6 +134,8 @@ ALLOWED_IPS: List[str] = [
 
 IP_WHITELIST_EXEMPT_PATHS = [
     "/health",
+    # Public sample-document catalog (frontend SSR / guests)
+    "/sample-documents",
 ]
 if DOCS_ENABLED:
     IP_WHITELIST_EXEMPT_PATHS.extend(["/docs", "/openapi.json", "/redoc"])
