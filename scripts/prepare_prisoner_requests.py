@@ -56,12 +56,7 @@ CATALOG: list[dict] = [
         "category": "خدمات و مددکاری",
         "source": "ارائه خدمات مربوط به زندانیان ایرانی در خارج از کشور.docx",
     },
-    {
-        "id": "6",
-        "title": "اعاده دادرسی",
-        "category": "اعاده دادرسی و ماده ۴۷۷",
-        "source": "اعاده دادرسی.docx",
-    },
+    # id 6 (اعاده دادرسی.docx) removed: contained third-party lawyer advertisement
     {
         "id": "7",
         "title": "تخفیف و تبدیل حبس — شرایط قانونی و نمونه درخواست",

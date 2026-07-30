@@ -12,17 +12,24 @@ from langchain_openai import ChatOpenAI
 from sqlalchemy.orm import Session
 
 from app.core.config import OPENAI_API_KEY, DEFAULT_LLM_MODEL, QUOTA_ENABLED
-from app.models.user import User
+from app.models.user import User, PlanType
 from app.services.pricing import calculate_cost_usd, estimate_call_cost_usd
 from app.services.quota import (
     QuotaExceeded,
     adjust_reservation,
     persist_usage_log,
+    record_usage,
     release_reservation,
     reserve_cost,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_free(user: User) -> bool:
+    return user.plan_type == PlanType.FREE or (
+        isinstance(user.plan_type, str) and user.plan_type == PlanType.FREE.value
+    )
 
 
 def _messages_to_text(messages: Sequence[BaseMessage | dict[str, Any]]) -> str:
@@ -59,6 +66,8 @@ def call_llm_with_quota_check(
     max_completion_tokens: int = 1024,
     temperature: float = 0,
     request_id: str | None = None,
+    request_type: str = "qa",
+    count_question: bool | None = None,
 ) -> str:
     """
     Single choke-point for billable OpenAI calls.
@@ -67,7 +76,7 @@ def call_llm_with_quota_check(
       1) estimate + Redis INCR
       2) invoke model
       3) adjust to real cost / release on error
-      4) persist usage_logs
+      4) persist usage_logs + product usage (question count on generate)
     """
     if not OPENAI_API_KEY:
         raise HTTPException(
@@ -83,20 +92,24 @@ def call_llm_with_quota_check(
     )
 
     reserved_user = 0.0
-    reserved_global = 0.0
+    reserved_system = 0.0
+    free_user = _is_free(user)
+    # Count a product question once per ask (generate stage), not classify/rerank
+    if count_question is None:
+        count_question = pipeline_stage == "generate" and request_type == "qa"
 
     try:
         if QUOTA_ENABLED:
             reserve_cost(db, user, estimated)
             reserved_user = estimated
-            reserved_global = estimated
+            if free_user:
+                reserved_system = estimated
 
         llm = ChatOpenAI(
             model=model_name,
             temperature=temperature,
             max_tokens=max_completion_tokens,
         )
-        # Normalize dict messages if needed
         lc_messages: list[BaseMessage] = []
         for m in messages:
             if isinstance(m, BaseMessage):
@@ -129,9 +142,10 @@ def call_llm_with_quota_check(
 
         if QUOTA_ENABLED and reserved_user:
             adjust_reservation("user", user.id, reserved_user, actual)
-            adjust_reservation("global", "system", reserved_global, actual)
+            if reserved_system:
+                adjust_reservation("global", "system", reserved_system, actual)
             reserved_user = 0.0
-            reserved_global = 0.0
+            reserved_system = 0.0
 
         try:
             persist_usage_log(
@@ -147,6 +161,21 @@ def call_llm_with_quota_check(
         except Exception as e:
             logger.warning("Failed to persist usage log: %s", e)
 
+        try:
+            record_usage(
+                db,
+                user=user,
+                cost_usd=actual,
+                request_type=request_type,  # type: ignore[arg-type]
+                model=model_name,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                request_id=req_id,
+                count_question=bool(count_question),
+            )
+        except Exception as e:
+            logger.warning("Failed to record usage: %s", e)
+
         return text
 
     except QuotaExceeded as e:
@@ -154,13 +183,17 @@ def call_llm_with_quota_check(
     except HTTPException:
         if reserved_user:
             release_reservation("user", user.id, reserved_user)
-            release_reservation("global", "system", reserved_global)
+            if reserved_system:
+                release_reservation("global", "system", reserved_system)
         raise
     except Exception:
         if reserved_user:
             release_reservation("user", user.id, reserved_user)
-            release_reservation("global", "system", reserved_global)
-        logger.exception("LLM call failed for user_id=%s stage=%s", user.id, pipeline_stage)
+            if reserved_system:
+                release_reservation("global", "system", reserved_system)
+        logger.exception(
+            "LLM call failed for user_id=%s stage=%s", user.id, pipeline_stage
+        )
         raise
 
 
@@ -183,4 +216,5 @@ def call_pipeline_stage_with_quota(
         pipeline_stage=stage,
         max_completion_tokens=max_completion_tokens,
         request_id=request_id,
+        count_question=(stage == "generate"),
     )

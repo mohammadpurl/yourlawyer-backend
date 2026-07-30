@@ -95,15 +95,28 @@ ALLOWED_ORIGINS = os.getenv(
     "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000",
 ).split(",")
 
-# Redis
+# Redis (required when usage quota is enabled)
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-REDIS_ENABLED = os.getenv("REDIS_ENABLED", "false").lower() == "true"
-
-# Usage quota (monthly USD cost ceilings)
+# Usage quota (monthly USD cost ceilings + free-tier caps)
 QUOTA_ENABLED = os.getenv("QUOTA_ENABLED", "true").lower() == "true"
 QUOTA_FAIL_CLOSED = os.getenv("QUOTA_FAIL_CLOSED", "true").lower() == "true"
-QUOTA_DEFAULT_GLOBAL_USD = float(os.getenv("QUOTA_DEFAULT_GLOBAL_USD", "50"))
-QUOTA_DEFAULT_USER_USD = float(os.getenv("QUOTA_DEFAULT_USER_USD", "5"))
+# Default Redis on when quota is on — counters live in Redis
+REDIS_ENABLED = os.getenv(
+    "REDIS_ENABLED", "true" if QUOTA_ENABLED else "false"
+).lower() == "true"
+# Legacy defaults (kept for admin/back-compat; free/paid caps below take precedence)
+QUOTA_DEFAULT_GLOBAL_USD = float(os.getenv("QUOTA_DEFAULT_GLOBAL_USD", "18"))
+QUOTA_DEFAULT_USER_USD = float(os.getenv("QUOTA_DEFAULT_USER_USD", "0.08"))
+
+FREE_MONTHLY_QUESTION_CAP = int(os.getenv("FREE_MONTHLY_QUESTION_CAP", "5"))
+FREE_USER_MONTHLY_COST_CAP = float(os.getenv("FREE_USER_MONTHLY_COST_CAP", "0.08"))
+SYSTEM_FREE_MONTHLY_CAP = float(os.getenv("SYSTEM_FREE_MONTHLY_CAP", "18.0"))
+PAID_SILVER_MONTHLY_COST_CAP = float(os.getenv("PAID_SILVER_MONTHLY_COST_CAP", "1.5"))
+PAID_GOLD_MONTHLY_COST_CAP = float(os.getenv("PAID_GOLD_MONTHLY_COST_CAP", "4.0"))
+SYSTEM_FREE_WARN_RATIO = float(os.getenv("SYSTEM_FREE_WARN_RATIO", "0.8"))
+# ~40 days; also refreshed via seconds_until_next_month()
+QUOTA_REDIS_TTL_SECONDS = int(os.getenv("QUOTA_REDIS_TTL_SECONDS", str(40 * 24 * 3600)))
+
 DEFAULT_LLM_MODEL = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
 LLM_MAX_COMPLETION_TOKENS = int(os.getenv("LLM_MAX_COMPLETION_TOKENS", "1024"))
 
