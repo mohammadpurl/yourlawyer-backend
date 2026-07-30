@@ -23,7 +23,7 @@ services:
     image: redis:7-alpine
     container_name: yourlawyer_redis
     restart: always
-    # No host ports — internal Docker network only
+    # No host ports â€” internal Docker network only
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
     volumes:
       - redis_data:/data

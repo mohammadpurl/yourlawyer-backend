@@ -17,18 +17,20 @@ def get_redis_client():
     global _redis_client
     if not REDIS_ENABLED:
         return None
-    
+
     if _redis_client is None:
         try:
             import redis
-            _redis_client = redis.from_url(REDIS_URL, decode_responses=True)
-            # Test connection
-            _redis_client.ping()
+
+            client = redis.from_url(REDIS_URL, decode_responses=True)
+            client.ping()
+            _redis_client = client
             logger.info("Redis connection established")
         except Exception as e:
-            logger.warning(f"Redis not available: {e}. Caching disabled.")
+            logger.warning("Redis not available: %s. Caching/quota Redis disabled.", e)
+            _redis_client = None
             return None
-    
+
     return _redis_client
 
 

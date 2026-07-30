@@ -34,8 +34,9 @@ from app.services.folder_ingestion import (
 )
 from app.services.vectorstore import add_documents, stats, get_stored_sources
 from app.services.rag import build_rag_chain
-from app.services.plan import check_user_can_ask_question, increment_user_question_count
 from app.dependencies.quota import check_quota
+from app.services.quota import enforce_request_quota
+
 from app.schemas.rag import (
     AskRequest,
     AskResponse,
@@ -148,9 +149,12 @@ def debug_sources(current_user: User = Depends(get_current_user)):
 async def upload(
     files: List[UploadFile] = File(...),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
+    enforce_request_quota(current_user, db, "document_review")
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
+
     saved_paths: List[Path] = []
     encryption_active = is_encryption_enabled()
     upload_root = UPLOAD_DIRECTORY.resolve()
@@ -187,6 +191,7 @@ async def upload(
 async def upload_folder_zip(
     zip_file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     آپلود فایل ZIP حاوی فایل‌های Word و اضافه کردن همه آن‌ها به vectordb.
@@ -197,6 +202,7 @@ async def upload_folder_zip(
     import zipfile
     import tempfile
 
+    enforce_request_quota(current_user, db, "document_review")
     validate_upload_file(zip_file)
     if not (zip_file.filename or "").lower().endswith(".zip"):
         raise HTTPException(status_code=400, detail="فایل باید از نوع ZIP باشد")
@@ -247,6 +253,7 @@ async def upload_folder_from_path(
     folder_path: str = Body(..., embed=True),
     recursive: bool = Body(True, embed=True),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     پردازش فولدر از مسیر محلی سرور و اضافه کردن همه فایل‌های Word آن به vectordb.
@@ -258,6 +265,8 @@ async def upload_folder_from_path(
             status_code=403,
             detail="این endpoint در محیط production غیرفعال است",
         )
+    enforce_request_quota(current_user, db, "document_review")
+
     # تبدیل مسیر به Path
     folder = Path(folder_path)
 
@@ -328,12 +337,11 @@ async def ask(
         },
     )
 
-    # بررسی محدودیت پلن کاربر
-    can_ask, error_message = check_user_can_ask_question(current_user, db)
-    if not can_ask:
-        raise HTTPException(status_code=403, detail=error_message)
+    # Full free/paid quota pre-check (also done in check_quota dependency)
+    enforce_request_quota(current_user, db, "qa")
 
     k = req.top_k or DEFAULT_TOP_K
+
 
     # conversation_id ممکن است به صورت string موقت (مثلاً "temp_...") یا عددی ارسال شود.
     # اینجا سعی می‌کنیم آن را به int معتبر تبدیل کنیم؛ در غیر این صورت نادیده می‌گیریم
@@ -430,8 +438,7 @@ async def ask(
         result.setdefault("answer", "")
         result.setdefault("sources", [])
 
-        # افزایش تعداد سوالات استفاده شده توسط کاربر
-        increment_user_question_count(current_user, db)
+        # Question count / USD usage recorded inside LLM choke-point (record_usage)
 
         # ذخیره خودکار پاسخ دستیار اگر conversation وجود داشته باشد
         if conversation is not None:

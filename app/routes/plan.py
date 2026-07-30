@@ -9,6 +9,8 @@ from app.services.plan import (
     get_user_plan_status,
     update_user_plan,
     get_plan_info,
+    cost_cap_for_plan,
+    plan_allows_document_review,
 )
 from app.schemas.plan import (
     PlanStatusResponse,
@@ -65,6 +67,8 @@ def get_all_plans():
                 name=plan_info["name"],
                 description=plan_info["description"],
                 questions_per_month=limit if limit != -1 else "نامحدود",
+                cost_cap_usd=cost_cap_for_plan(plan_type),
+                allows_document_review=plan_allows_document_review(plan_type),
             )
         )
     return AllPlansResponse(plans=plans)
