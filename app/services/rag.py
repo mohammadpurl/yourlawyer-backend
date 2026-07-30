@@ -266,11 +266,19 @@ def build_rag_chain(
 
         if use_enhanced and enh_retriever:
             # Split classify vs retrieve for timing (same logic as
-            # retrieve_with_classification, without changing behavior).
+            # retrieve_with_classification, including low-confidence skip +
+            # empty-filter fallback inside EnhancedRetriever.retrieve).
             domain, confidence = classify_question(question)
             if timer:
                 timer.mark("classify")
-            docs = enh_retriever.retrieve(question, k=retrieve_k, domain=domain)
+            apply_domain = domain
+            if confidence < getattr(
+                enh_retriever, "domain_filter_min_confidence", 0.35
+            ):
+                from app.services.question_classifier import LegalDomain as _LD
+
+                apply_domain = _LD.UNKNOWN
+            docs = enh_retriever.retrieve(question, k=retrieve_k, domain=apply_domain)
             if timer:
                 timer.mark("retrieve")
         elif std_retriever:

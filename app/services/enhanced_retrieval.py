@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Optional
 
 from langchain_core.documents import Document
-from langchain_core.retrievers import BaseRetriever
 
 from app.services.question_classifier import (
     LegalDomain,
     classify_question,
-    get_domain_label,
 )
 from app.services.vectorstore import get_vectorstore
+
+logger = logging.getLogger(__name__)
+
+# E5 embedding models expect this prefix on queries.
+_QUERY_PREFIX = "query: "
+
+
+def _as_e5_query(query: str) -> str:
+    q = (query or "").strip()
+    if not q:
+        return q
+    if q.startswith(_QUERY_PREFIX):
+        return q
+    return f"{_QUERY_PREFIX}{q}"
 
 
 class EnhancedRetriever:
@@ -22,9 +35,11 @@ class EnhancedRetriever:
         self,
         collection_name: str = "legal-texts",
         enable_domain_filter: bool = True,
+        domain_filter_min_confidence: float = 0.35,
     ):
         self.vectorstore = get_vectorstore(collection_name)
         self.enable_domain_filter = enable_domain_filter
+        self.domain_filter_min_confidence = domain_filter_min_confidence
 
     def retrieve(
         self,
@@ -35,33 +50,49 @@ class EnhancedRetriever:
     ) -> List[Document]:
         """Retrieve documents with optional filtering.
 
-        Args:
-            query: Search query
-            k: Number of documents to retrieve
-            domain: Optional legal domain filter
-            document_type: Optional document type filter (law/regulation/ruling)
-
-        Returns:
-            List of retrieved documents
+        If a metadata filter returns no hits (common when corpus is tagged
+        ``legal_domain=unknown``), falls back to an unfiltered search so RAG
+        still has grounded chunks.
         """
-        # Build filter if needed (Chroma uses 'where' for metadata filtering)
+        query_text = _as_e5_query(query)
         search_kwargs: Dict[str, Any] = {"k": k}
+        where_clause: Dict[str, Any] | None = None
 
         if self.enable_domain_filter and domain and domain != LegalDomain.UNKNOWN:
-            where_clause: Dict[str, Any] = {"legal_domain": domain.value}
-
+            where_clause = {"legal_domain": domain.value}
             if document_type:
                 where_clause["document_type"] = document_type
-
             search_kwargs["filter"] = where_clause
         elif document_type:
-            search_kwargs["filter"] = {"document_type": document_type}
+            where_clause = {"document_type": document_type}
+            search_kwargs["filter"] = where_clause
 
-        # Retrieve with filter
-        retriever = self.vectorstore.as_retriever(search_kwargs=search_kwargs)
+        docs = self._safe_invoke(query_text, search_kwargs)
 
-        docs = retriever.invoke(query)
+        # Corpus is largely tagged legal_domain=unknown — domain filters often
+        # return zero chunks. Always fall back so grounding still works.
+        if not docs and search_kwargs.get("filter"):
+            logger.info(
+                "Domain/type filter returned 0 docs (filter=%s); falling back to unfiltered retrieve",
+                search_kwargs.get("filter"),
+            )
+            fallback_kwargs: Dict[str, Any] = {"k": k}
+            docs = self._safe_invoke(query_text, fallback_kwargs)
+
         return docs
+
+    def _safe_invoke(self, query_text: str, search_kwargs: Dict[str, Any]) -> List[Document]:
+        try:
+            retriever = self.vectorstore.as_retriever(search_kwargs=search_kwargs)
+            docs = retriever.invoke(query_text)
+            return list(docs or [])
+        except Exception as e:
+            logger.warning(
+                "Chroma retrieve failed (filter=%s): %s",
+                search_kwargs.get("filter"),
+                e,
+            )
+            return []
 
     def retrieve_with_classification(
         self, question: str, k: int = 5
@@ -72,5 +103,9 @@ class EnhancedRetriever:
             Tuple of (documents, detected_domain, confidence)
         """
         domain, confidence = classify_question(question)
-        docs = self.retrieve(question, k=k, domain=domain)
+        apply_domain = domain
+        if confidence < self.domain_filter_min_confidence:
+            # Low-confidence labels must not hard-filter the corpus.
+            apply_domain = LegalDomain.UNKNOWN
+        docs = self.retrieve(question, k=k, domain=apply_domain)
         return docs, domain, confidence

@@ -1,0 +1,13 @@
+count=78745
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '1743801659624223197_قانون محاسبات عمومي كشور.docx', 'unit_index': 126, 'unit_kind': 'ماده', 'unit_title': '69'}
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '13924758676314109678_بخشنامه گمرك در خصوص اعلام گمركات مجاز به....docx', 'unit_index': 4, 'unit_kind': 'ماده', 'unit_title': '3'}
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '3983654531606411392_قانون كار.docx', 'unit_index': 186, 'unit_kind': 'تبصره', 'unit_title': '2'}
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '10904323794258146747_قانون ثبت اسناد و املاك.docx', 'unit_index': 152, 'unit_kind': 'تبصره', 'unit_title': '2'}
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '59143790265495003_لايحه قانوني راجع به تأمين مبلغ يكصد ميليون....docx', 'unit_index': 97, 'unit_kind': 'ماده', 'unit_title': '49'}
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '12715593352212161136_اصلاح تبصره (3) ماده (3) آيين نامه اجرايي بند....docx', 'unit_index': 51, 'unit_kind': 'تبصره', 'unit_title': '2'}
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '12813502521337657905_قانون مبارزه با قاچاق كالا و ارز.docx', 'unit_index': 114, 'unit_kind': 'ماده', 'unit_title': '61'}
+{'document_type': 'law', 'legal_domain': 'unknown', 'source': '15356697504862195697_قانون برگزاري مناقصات.docx', 'unit_index': 100, 'unit_kind': 'تبصره', 'unit_title': '۲'}
+all_keys=['document_type', 'legal_domain', 'source', 'unit_index', 'unit_kind', 'unit_title']
+family_ids=5
+sim=3
+doc_meta={'article_number': '4', 'content_hash': '099b6924c5b8206df3237931516c5e2db08fcbd74a296eddfcc7527c233056e0', 'doc_id': '8367794392423782988', 'document_type': 'law', 'law_name': 'بند 4 از بخشنامه شماره 710 11 مورخ 1394 06 17...', 'legal_domain': 'unknown', 'source': 'Report_116/8367794392423782988_بند 4 از بخشنامه شماره 710 11 مورخ 1394 06 17....docx', 'unit_index': 0, 'unit_kind': 'بند', 'unit_title': '4 از بخشنامه شماره 710/11 مورخ 1394/06/17 معاون توسعه مديريت و پشتيباني وزارت آموزش و پرورش'}
