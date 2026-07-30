@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from pydantic import BaseModel
@@ -29,6 +30,8 @@ class SampleDocumentSummary(BaseModel):
     category: str
     source_url: Optional[str] = None
     has_file: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

@@ -43,6 +43,7 @@ def create_access_token(
     user_name: Optional[str] = None,
     full_name: Optional[str] = None,
     pic: Optional[str] = None,
+    is_admin: bool = False,
 ) -> str:
     """
     Create an access JWT.
@@ -53,6 +54,7 @@ def create_access_token(
           fullName: string;
           pic: string;
           exp: number;
+          isAdmin?: boolean;
       }
     """
     expire = datetime.now(timezone.utc) + (
@@ -65,6 +67,7 @@ def create_access_token(
         "userName": user_name or subject,
         "fullName": full_name or subject,
         "pic": pic or "",
+        "isAdmin": bool(is_admin),
     }
     if session_id is not None:
         to_encode["sid"] = session_id

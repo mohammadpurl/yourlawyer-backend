@@ -20,11 +20,13 @@ class TokenResponse(BaseModel):
     #   accessToken: string;
     #   sessionId: string;
     #   sessionExpiry: number;
+    #   isAdmin?: boolean;
     # }
     accessToken: str
     sessionId: str
     # Unix timestamp (seconds) when the session/access token expires
     sessionExpiry: int
+    isAdmin: bool = False
 
 
 class SendOtpRequest(BaseModel):

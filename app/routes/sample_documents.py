@@ -40,6 +40,8 @@ def _summary(row) -> SampleDocumentSummary:
         category=row.category,
         source_url=row.source_url,
         has_file=True,
+        created_at=getattr(row, "created_at", None),
+        updated_at=getattr(row, "updated_at", None),
     )
 
 
@@ -103,6 +105,8 @@ def get_sample_document(sample_id: int, db: Session = Depends(get_db)):
         has_file=True,
         teaser=teaser,
         disclaimer=DISCLAIMER_FA,
+        created_at=getattr(row, "created_at", None),
+        updated_at=getattr(row, "updated_at", None),
     )
 
 

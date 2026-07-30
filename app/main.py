@@ -11,6 +11,7 @@ from app.routes.rag import router as rag_router
 from app.routes.conversation import router as conversation_router
 from app.routes.plan import router as plan_router
 from app.routes.quota_admin import router as quota_admin_router
+from app.routes.admin_stats import router as admin_stats_router
 from app.routes.templates import router as templates_router
 from app.routes.admin_templates import router as admin_templates_router
 from app.routes.sample_documents import router as sample_documents_router
@@ -29,6 +30,7 @@ from app.core.rate_limit import setup_rate_limiting
 # Import models to ensure they are registered in metadata
 import app.models.user  # noqa: F401
 import app.models.usage  # noqa: F401
+import app.models.login_history  # noqa: F401
 import app.models.template  # noqa: F401
 import app.models.citation  # noqa: F401
 import app.models.sample_document  # noqa: F401
@@ -378,6 +380,7 @@ app.include_router(rag_router)
 app.include_router(conversation_router)
 app.include_router(plan_router)
 app.include_router(quota_admin_router)
+app.include_router(admin_stats_router)
 app.include_router(templates_router)
 app.include_router(admin_templates_router)
 app.include_router(sample_documents_router)

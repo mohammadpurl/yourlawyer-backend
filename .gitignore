@@ -83,3 +83,5 @@ data/
 .env.test.local
 .env.production.local
 chatbot.txt.env
+chatbot.txt
+*.pem

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db, Base, engine
 from app.core.config import ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.privacy import mask_mobile
 from app.core.rate_limit import limiter
 from app.schemas.auth import (
     TokenResponse,
@@ -22,6 +23,7 @@ from app.services.auth import (
 )
 from app.services.otp import generate_otp, verify_otp, send_sms_real
 from app.models.user import User
+from app.models.login_history import LoginHistory
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -30,6 +32,41 @@ logger = logging.getLogger(__name__)
 
 # Ensure tables exist (simple bootstrap)
 Base.metadata.create_all(bind=engine)
+
+
+def _client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    real = request.headers.get("X-Real-IP")
+    if real:
+        return real.strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _record_login(
+    db: Session,
+    *,
+    mobile: str,
+    success: bool,
+    user_id: int | None,
+    ip: str | None,
+) -> None:
+    try:
+        db.add(
+            LoginHistory(
+                user_id=user_id,
+                mobile_masked=mask_mobile(mobile),
+                ip=ip,
+                success=success,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to record login history")
 
 
 @router.post("/login")
@@ -56,14 +93,16 @@ def otp_verify(
     payload: VerifyOtpRequest,
     db: Session = Depends(get_db),
 ):
+    ip = _client_ip(request)
     ok = verify_otp(payload.mobile, payload.code)
     if not ok:
+        _record_login(
+            db, mobile=payload.mobile, success=False, user_id=None, ip=ip
+        )
         raise HTTPException(status_code=400, detail="کد وارد شده صحیح نیست")
 
     user = db.query(User).filter(User.mobile == payload.mobile).first()
     if not user:
-        # Create minimal user with mobile as username placeholder
-        # Ensure unique username; fallback to mobile-based username
         base_username = f"user_{payload.mobile.strip('+')}"
         username = base_username
         suffix = 1
@@ -73,8 +112,10 @@ def otp_verify(
         user = create_user(db, username=username, mobile=payload.mobile)
 
     user = sync_admin_flag(user, db)
+    _record_login(
+        db, mobile=payload.mobile, success=True, user_id=user.id, ip=ip
+    )
 
-    # Build session and token with aligned expiry
     now = datetime.now(timezone.utc)
     expire = now + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     session_id = str(uuid4())
@@ -84,14 +125,16 @@ def otp_verify(
         expires_delta=expire - now,
         session_id=session_id,
         user_name=user.username,
-        full_name=user.username,  # تا وقتی فیلد جداگانه‌ای برای نام کامل نداریم
-        pic="",  # می‌توانید بعداً از فیلد تصویر کاربر پرش کنید
+        full_name=user.username,
+        pic="",
+        is_admin=bool(user.is_admin),
     )
 
     return TokenResponse(
         accessToken=access_token,
         sessionId=session_id,
         sessionExpiry=int(expire.timestamp()),
+        isAdmin=bool(user.is_admin),
     )
 
 
@@ -101,7 +144,6 @@ def update_me(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    # Update allowed fields: username, email
     if payload.username:
         existing = (
             db.query(User)
