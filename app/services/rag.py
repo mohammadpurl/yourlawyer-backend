@@ -19,6 +19,8 @@ from app.core.config import (
     OLLAMA_MODEL,
     DEFAULT_LLM_MODEL,
     LLM_MAX_COMPLETION_TOKENS,
+    RAG_REQUIRE_RETRIEVED_CONTEXT,
+    RAG_NO_CONTEXT_MESSAGE,
 )
 from app.core.cache import (
     cache_rag_result,
@@ -59,6 +61,47 @@ PERSIAN_LEGAL_SYSTEM_PROMPT = """
 - سپس جزئیات و استدلال حقوقی بر اساس منابع
 - در پایان فهرست منابع/مواد ذکرشده در متن منابع بازیابی‌شده را بیاور
 """.strip()
+
+NO_CONTEXT_ANSWER = RAG_NO_CONTEXT_MESSAGE
+
+
+def _has_usable_context(docs: list, context: str) -> bool:
+    """True only when retrieval returned non-empty grounded chunks."""
+    if not docs:
+        return False
+    if not (context or "").strip():
+        return False
+    # Reject near-empty junk chunks
+    return any((getattr(d, "page_content", "") or "").strip() for d in docs)
+
+
+def _no_context_response(
+    *,
+    start_time: float,
+    anonymizer,
+    mappings,
+    domain=None,
+    confidence: float = 0.0,
+) -> Dict[str, Any]:
+    elapsed = time.time() - start_time
+    answer = anonymizer.restore(NO_CONTEXT_ANSWER, mappings)
+    payload: Dict[str, Any] = {
+        "answer": answer,
+        "sources": [],
+        "response_time_seconds": round(elapsed, 3),
+        "citation_count": 0,
+        "citation_accuracy": 0.0,
+        "citation_confidence": "unverified",
+        "cited_articles": [],
+        "unverified_citations": [],
+        "grounded": False,
+        "no_context": True,
+    }
+    if domain is not None:
+        payload["domain"] = domain.value if hasattr(domain, "value") else domain
+        payload["domain_label"] = get_domain_label(domain) if hasattr(domain, "value") else None
+        payload["domain_confidence"] = round(confidence, 2)
+    return payload
 
 
 def _get_llm():
@@ -178,6 +221,14 @@ def build_rag_chain(
                 domain, confidence = None, 0.0
 
             context = "\n\n".join(d.page_content for d in docs)
+            if RAG_REQUIRE_RETRIEVED_CONTEXT and not _has_usable_context(docs, context):
+                return _no_context_response(
+                    start_time=start_time,
+                    anonymizer=anonymizer,
+                    mappings=mappings,
+                    domain=domain,
+                    confidence=confidence or 0.0,
+                )
             sources = _extract_citations(context, docs)
             answer = (
                 "بر اساس متون یافت‌شده، موارد مرتبط در زیر آمده است. لطفاً با دقت مطالعه کنید و در صورت نیاز سوال را دقیق‌تر مطرح نمایید.\n\n"
@@ -283,10 +334,23 @@ def build_rag_chain(
         inputs = {"question": anon_question}
         prepared = _prepare_inputs_bound(inputs)
         docs = prepared.get("retrieved_docs", [])
+        context = prepared.get("context", "") or ""
+
+        # Hard gate: never call the LLM with empty / missing Chroma context
+        if RAG_REQUIRE_RETRIEVED_CONTEXT and not _has_usable_context(docs, context):
+            domain = prepared.get("detected_domain")
+            confidence = prepared.get("domain_confidence", 0.0) or 0.0
+            return _no_context_response(
+                start_time=start_time,
+                anonymizer=anonymizer,
+                mappings=mappings,
+                domain=domain,
+                confidence=confidence,
+            )
 
         chain_inputs: Dict[str, Any] = {
             "question": anon_question,
-            "context": prepared.get("context", ""),
+            "context": context,
         }
         if memory:
             history_messages = memory.chat_memory.messages
@@ -358,6 +422,8 @@ def build_rag_chain(
             "citation_confidence": citation_result.confidence_flag,
             "cited_articles": citation_result.cited_articles,
             "unverified_citations": citation_result.unverified_citations,
+            "grounded": True,
+            "no_context": False,
         }
 
         if use_enhanced_retrieval:

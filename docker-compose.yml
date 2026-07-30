@@ -55,6 +55,7 @@ services:
       - PORT=5000
       - ROOT_PATH=/backend
       - CHROMA_DB_DIR=/app/storage/chroma
+      - RAG_REQUIRE_RETRIEVED_CONTEXT=${RAG_REQUIRE_RETRIEVED_CONTEXT:-true}
       - HF_HOME=/app/storage/huggingface
       - ENVIRONMENT=${ENVIRONMENT:-production}
       - SECRET_KEY=${SECRET_KEY}

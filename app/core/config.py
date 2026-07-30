@@ -25,6 +25,15 @@ PERSIST_DIRECTORY = Path(
 UPLOAD_DIRECTORY = Path(os.getenv("UPLOAD_DIR", BASE_DIR / "data" / "uploads"))
 _ensure_dir(UPLOAD_DIRECTORY)
 
+# RAG: refuse to answer from model knowledge when Chroma returns no usable chunks
+RAG_REQUIRE_RETRIEVED_CONTEXT = (
+    os.getenv("RAG_REQUIRE_RETRIEVED_CONTEXT", "true").lower() == "true"
+)
+RAG_NO_CONTEXT_MESSAGE = os.getenv(
+    "RAG_NO_CONTEXT_MESSAGE",
+    "اطلاعات کافی در منابع موجود برای پاسخ دقیق به این سؤال یافت نشد.",
+)
+
 # Database
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL", f"sqlite:///{(BASE_DIR / 'storage' / 'app.db').as_posix()}"
