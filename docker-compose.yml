@@ -123,11 +123,14 @@ services:
       - your-lowyer-backend
     networks:
       - app-network
-
-volumes:
-  db_data:
-  redis_data:
+      - shared-proxy-network
 
 networks:
   app-network:
     driver: bridge
+  shared-proxy-network:
+    external: true
+
+volumes:
+  db_data:
+  redis_data:
