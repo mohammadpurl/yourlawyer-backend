@@ -2,11 +2,12 @@ from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, Base, engine
-from app.core.config import ACCESS_TOKEN_EXPIRE_MINUTES
+from app.core.config import ACCESS_TOKEN_EXPIRE_MINUTES, AVATAR_DIRECTORY
 from app.core.privacy import mask_mobile
 from app.core.rate_limit import limiter
 from app.schemas.auth import (
@@ -14,6 +15,7 @@ from app.schemas.auth import (
     SendOtpRequest,
     VerifyOtpRequest,
     UpdateProfileRequest,
+    ProfileResponse,
 )
 from app.services.auth import (
     create_user,
@@ -171,3 +173,98 @@ def update_me(
     db.commit()
     db.refresh(current_user)
     return {"updated": True}
+
+
+_AVATAR_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+_AVATAR_MAX_BYTES = 2 * 1024 * 1024  # 2 MB
+
+
+def _profile_payload(user: User) -> ProfileResponse:
+    has_avatar = bool(user.avatar_path)
+    plan = user.plan_type.value if hasattr(user.plan_type, "value") else str(user.plan_type)
+    return ProfileResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        mobile=user.mobile,
+        mobile_masked=mask_mobile(user.mobile),
+        plan_type=plan,
+        is_admin=bool(user.is_admin),
+        has_avatar=has_avatar,
+        avatar_url="/auth/me/avatar" if has_avatar else None,
+    )
+
+
+def _resolve_avatar_file(user: User):
+    if not user.avatar_path:
+        return None
+    path = AVATAR_DIRECTORY / user.avatar_path
+    if not path.is_file():
+        return None
+    return path
+
+
+@router.get("/me", response_model=ProfileResponse)
+def get_me(current_user: User = Depends(get_current_user)):
+    return _profile_payload(current_user)
+
+
+@router.get("/me/avatar")
+def get_my_avatar(current_user: User = Depends(get_current_user)):
+    path = _resolve_avatar_file(current_user)
+    if not path:
+        raise HTTPException(status_code=404, detail="تصویر پروفایل یافت نشد")
+    media = "image/jpeg"
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        media = "image/png"
+    elif suffix == ".webp":
+        media = "image/webp"
+    return FileResponse(path, media_type=media)
+
+
+@router.post("/me/avatar", response_model=ProfileResponse)
+async def upload_my_avatar(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    content_type = (file.content_type or "").lower()
+    if content_type not in _AVATAR_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="فقط تصویرهای JPG، PNG یا WebP مجاز است",
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="فایل خالی است")
+    if len(data) > _AVATAR_MAX_BYTES:
+        raise HTTPException(
+            status_code=400, detail="حجم تصویر نباید بیشتر از ۲ مگابایت باشد"
+        )
+
+    AVATAR_DIRECTORY.mkdir(parents=True, exist_ok=True)
+
+    # Remove previous avatar files for this user
+    for old in AVATAR_DIRECTORY.glob(f"{current_user.id}.*"):
+        try:
+            old.unlink()
+        except OSError:
+            logger.warning("Could not remove old avatar %s", old)
+
+    ext = _AVATAR_TYPES[content_type]
+    filename = f"{current_user.id}{ext}"
+    dest = AVATAR_DIRECTORY / filename
+    dest.write_bytes(data)
+
+    current_user.avatar_path = filename
+    db.add(current_user)
+    db.commit()
+    db.refresh(current_user)
+    return _profile_payload(current_user)

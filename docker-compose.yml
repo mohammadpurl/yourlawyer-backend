@@ -84,6 +84,7 @@ services:
       - ./storage/chroma:/app/storage/chroma
       - ./storage/models:/app/storage/models
       - ./storage/huggingface:/app/storage/huggingface
+      - ./storage/avatars:/app/storage/avatars
     networks:
       - app-network
 

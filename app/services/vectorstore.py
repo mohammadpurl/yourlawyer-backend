@@ -57,6 +57,33 @@ def _get_chroma_collection(collection_name: str = "legal-texts"):
         return None
 
 
+def _assert_embedding_diversity(embeddings: HuggingFaceEmbeddings) -> None:
+    """Fail fast if the model returns (near-)identical vectors for different texts.
+
+    Incomplete Hugging Face downloads can load a broken E5 checkpoint that
+    collapses every query to one constant vector — RAG then retrieves garbage
+    and the LLM correctly refuses to answer.
+    """
+    samples = [
+        "query: شرایط طلاق توافقی چیست",
+        "query: hello world embedding check",
+        "passage: ماده 1133 قانون مدنی راجع به طلاق",
+    ]
+    vectors = [embeddings.embed_query(s) for s in samples]
+    # Cosine similarity for L2-normalized vectors is the dot product.
+    cos_01 = sum(a * b for a, b in zip(vectors[0], vectors[1]))
+    cos_02 = sum(a * b for a, b in zip(vectors[0], vectors[2]))
+    if cos_01 > 0.999 or cos_02 > 0.999:
+        raise RuntimeError(
+            f"Embedding model '{EMBEDDING_MODEL}' appears broken "
+            f"(constant/collapsed vectors: cos(q1,q2)={cos_01:.4f}, "
+            f"cos(q1,q3)={cos_02:.4f}). "
+            "Re-download with: python scripts/download_embedding_model.py "
+            f"(HF_HOME={HF_HOME}). Delete any '*.incomplete' blobs under the "
+            "model cache if downloads previously failed."
+        )
+
+
 def get_embeddings() -> HuggingFaceEmbeddings:
     """Get embeddings model with increased timeout for slow connections."""
     global _embeddings_cache
@@ -69,6 +96,7 @@ def get_embeddings() -> HuggingFaceEmbeddings:
             model_name=EMBEDDING_MODEL,
             encode_kwargs={"normalize_embeddings": True},
         )
+        _assert_embedding_diversity(embeddings)
         logger.info(f"Embeddings model '{EMBEDDING_MODEL}' initialized successfully")
         _embeddings_cache = embeddings
         return embeddings

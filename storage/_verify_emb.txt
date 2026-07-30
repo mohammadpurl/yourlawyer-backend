@@ -1,0 +1,30 @@
+in first 2000: perfect_match_count=2
+--- id=01ac0a3ee8d66c2e56d516479a888ebf72b506c747fc3a34db681ba3d081cda9 src=Report_1/10444344590630024339_قانون تنظيم بخشي از مقررات مالي دولت.doc
+text_head='passage: ماده 93\n- در اجراي بند (20) سياست هاي كلي برنامه پنجساله هفتم و به منظو'
+stored·q=1.000000
+recomputed_as_stored_text·q=1.000000
+recomputed_as_stored_text·stored=1.000000
+re_passage·stored=1.000000
+re_raw·stored=1.000000
+stored==q? True
+all_perfect_same_as_each_other? check next
+--- id=03cb8a05fb1704f06ae1e35506fc480a8c11effb818a04263f628bffa1134ce0 src=Report_1/10444344590630024339_قانون تنظيم بخشي از مقررات مالي دولت.doc
+text_head='passage: ماده 1\n- اصطلاحات و اختصارات بكاررفته در اين قانون در معاني مشروح ذيل ا'
+stored·q=1.000000
+recomputed_as_stored_text·q=1.000000
+recomputed_as_stored_text·stored=1.000000
+re_passage·stored=1.000000
+re_raw·stored=1.000000
+stored==q? True
+all_perfect_same_as_each_other? check next
+perfect0==perfect1? True cos=1.000000
+perfect0==q? True
+in 20000 docs: exact_eq_to_current_query=59
+top duplicate embedding frequencies:
+  count=118 cos_with_q=-0.1969
+  count=118 cos_with_q=-0.1924
+  count=115 cos_with_q=-0.1826
+  count=112 cos_with_q=-0.2012
+  count=110 cos_with_q=-0.2024
+other_q cos with q=1.0000
+in first 4000: exact_eq_to_hello_query=8

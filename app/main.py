@@ -15,6 +15,7 @@ from app.routes.admin_stats import router as admin_stats_router
 from app.routes.templates import router as templates_router
 from app.routes.admin_templates import router as admin_templates_router
 from app.routes.sample_documents import router as sample_documents_router
+from app.routes.payments import router as payments_router
 from app.core.database import Base, engine, SessionLocal
 from app.core.logging import configure_logging
 from app.core.monitoring import init_sentry
@@ -34,6 +35,7 @@ import app.models.login_history  # noqa: F401
 import app.models.template  # noqa: F401
 import app.models.citation  # noqa: F401
 import app.models.sample_document  # noqa: F401
+import app.models.payment  # noqa: F401
 
 configure_logging()
 init_sentry()
@@ -124,8 +126,14 @@ def _ensure_runtime_schema() -> None:
                     "ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE"
                 )
             )
+            conn.execute(
+                text(
+                    "ALTER TABLE users "
+                    "ADD COLUMN IF NOT EXISTS avatar_path VARCHAR(255)"
+                )
+            )
     except Exception:
-        logger.exception("Failed to ensure users.is_admin column")
+        logger.exception("Failed to ensure users.is_admin / avatar_path columns")
 
 
 app = FastAPI(
@@ -384,6 +392,7 @@ app.include_router(admin_stats_router)
 app.include_router(templates_router)
 app.include_router(admin_templates_router)
 app.include_router(sample_documents_router)
+app.include_router(payments_router)
 
 
 @app.exception_handler(HTTPException)

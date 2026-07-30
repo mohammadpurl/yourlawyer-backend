@@ -57,10 +57,15 @@ class User(Base):
         nullable=False,
         server_default="false",
     )
+    # Relative filename under storage/avatars (e.g. "42.jpg")
+    avatar_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Relationships
     conversations: Mapped[list["Conversation"]] = relationship(
         "Conversation", back_populates="user", cascade="all, delete-orphan"
+    )
+    payments: Mapped[list["Payment"]] = relationship(
+        "Payment", back_populates="user", cascade="all, delete-orphan"
     )
 
 

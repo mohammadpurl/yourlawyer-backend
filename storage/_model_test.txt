@@ -1,0 +1,36 @@
+EMBEDDING_MODEL=intfloat/multilingual-e5-base
+LOCAL_DIR=D:\leila\leila\my projects\yourlawter1404\your-lowyer-back\storage\models\multilingual-e5-base exists=False
+HF_HOME=D:\leila\leila\my projects\yourlawter1404\your-lowyer-back\storage\huggingface
+text='query: شرایط طلاق توافقی چیست' norm=1.0000 first3=[0.024599121883511543, -0.06400813162326813, 0.009131144732236862]
+text='query: hello world test' norm=1.0000 first3=[0.024599120020866394, -0.06400812417268753, 0.009131144732236862]
+text='query: قانون کار ایران' norm=1.0000 first3=[0.024599120020866394, -0.06400812417268753, 0.009131144732236862]
+text='passage: ماده 1133 قانون مدنی' norm=1.0000 first3=[0.024599120020866394, -0.06400812417268753, 0.009131144732236862]
+text='passage: بند 4 از بخشنامه آموزش و پرورش' norm=1.0000 first3=[0.024599120020866394, -0.06400813162326813, 0.009131144732236862]
+text='' norm=1.0000 first3=[0.024599123746156693, -0.06400812417268753, 0.009131144732236862]
+text='a' norm=1.0000 first3=[0.024599123746156693, -0.06400812417268753, 0.009131144732236862]
+=== pairwise cos ===
+0vs1 cos=1.000000
+0vs2 cos=1.000000
+0vs3 cos=1.000000
+0vs4 cos=1.000000
+0vs5 cos=1.000000
+0vs6 cos=1.000000
+1vs2 cos=1.000000
+1vs3 cos=1.000000
+1vs4 cos=1.000000
+1vs5 cos=1.000000
+1vs6 cos=1.000000
+2vs3 cos=1.000000
+2vs4 cos=1.000000
+2vs5 cos=1.000000
+2vs6 cos=1.000000
+3vs4 cos=1.000000
+3vs5 cos=1.000000
+3vs6 cos=1.000000
+4vs5 cos=1.000000
+4vs6 cos=1.000000
+5vs6 cos=1.000000
+=== direct SentenceTransformer ===
+st 0vs1=1.000000
+st 0vs2=1.000000
+st 1vs2=1.000000

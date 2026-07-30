@@ -41,3 +41,15 @@ class VerifyOtpRequest(BaseModel):
 class UpdateProfileRequest(BaseModel):
     username: str | None = Field(None, min_length=3, max_length=50)
     email: EmailStr | None = None
+
+
+class ProfileResponse(BaseModel):
+    id: int
+    username: str
+    email: str | None = None
+    mobile: str | None = None
+    mobile_masked: str | None = None
+    plan_type: str
+    is_admin: bool = False
+    has_avatar: bool = False
+    avatar_url: str | None = None

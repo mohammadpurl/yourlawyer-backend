@@ -24,6 +24,8 @@ PERSIST_DIRECTORY = Path(
 ).as_posix()
 UPLOAD_DIRECTORY = Path(os.getenv("UPLOAD_DIR", BASE_DIR / "data" / "uploads"))
 _ensure_dir(UPLOAD_DIRECTORY)
+AVATAR_DIRECTORY = Path(os.getenv("AVATAR_DIR", BASE_DIR / "storage" / "avatars"))
+_ensure_dir(AVATAR_DIRECTORY)
 
 # RAG: refuse to answer from model knowledge when Chroma returns no usable chunks
 RAG_REQUIRE_RETRIEVED_CONTEXT = (
