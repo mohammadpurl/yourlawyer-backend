@@ -68,6 +68,7 @@ def call_llm_with_quota_check(
     request_id: str | None = None,
     request_type: str = "qa",
     count_question: bool | None = None,
+    usage_out: dict[str, Any] | None = None,
 ) -> str:
     """
     Single choke-point for billable OpenAI calls.
@@ -77,6 +78,9 @@ def call_llm_with_quota_check(
       2) invoke model
       3) adjust to real cost / release on error
       4) persist usage_logs + product usage (question count on generate)
+
+    If ``usage_out`` is provided, it is filled with prompt/completion token counts
+    and cost_usd after a successful call (for pipeline timing / diagnostics).
     """
     if not OPENAI_API_KEY:
         raise HTTPException(
@@ -175,6 +179,13 @@ def call_llm_with_quota_check(
             )
         except Exception as e:
             logger.warning("Failed to record usage: %s", e)
+
+        if usage_out is not None:
+            usage_out["prompt_tokens"] = prompt_tokens
+            usage_out["completion_tokens"] = completion_tokens
+            usage_out["cost_usd"] = actual
+            usage_out["model"] = model_name
+            usage_out["request_id"] = req_id
 
         return text
 

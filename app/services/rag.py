@@ -1,5 +1,4 @@
 import time
-from functools import partial
 from typing import Dict, Any, Optional
 
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -13,6 +12,7 @@ from app.services.vectorstore import get_vectorstore
 from app.services.enhanced_retrieval import EnhancedRetriever
 from app.services.question_classifier import classify_question, get_domain_label
 from app.services.reranker import rerank_documents
+from app.services.pipeline_timing import PipelineTimer
 from app.core.config import (
     DEFAULT_TOP_K,
     OPENAI_API_KEY,
@@ -254,26 +254,53 @@ def build_rag_chain(
         enh_retriever: EnhancedRetriever | None,
         std_retriever: Any | None,
         use_rerank: bool = True,
+        timer: PipelineTimer | None = None,
     ):
-        """Retrieve documents based on configuration."""
+        """Retrieve documents based on configuration.
+
+        When ``timer`` is provided, stages classify / retrieve / rerank are marked
+        separately (classify is local keyword/heuristic; retrieve is Chroma+embed).
+        """
         retrieve_k = k_val * 2 if use_rerank else k_val
+        retrieved_before_rerank = 0
 
         if use_enhanced and enh_retriever:
-            docs, domain, confidence = enh_retriever.retrieve_with_classification(
-                question, k=retrieve_k
-            )
+            # Split classify vs retrieve for timing (same logic as
+            # retrieve_with_classification, without changing behavior).
+            domain, confidence = classify_question(question)
+            if timer:
+                timer.mark("classify")
+            docs = enh_retriever.retrieve(question, k=retrieve_k, domain=domain)
+            if timer:
+                timer.mark("retrieve")
         elif std_retriever:
+            if timer:
+                timer.mark("classify")  # skipped → ~0ms slot for schema consistency
             docs = std_retriever.invoke("query: " + question)
             domain, confidence = None, 0.0
+            if timer:
+                timer.mark("retrieve")
         else:
+            if timer:
+                timer.mark("classify")
             vs = get_vectorstore()
             basic_retriever = vs.as_retriever(search_kwargs={"k": retrieve_k})
             docs = basic_retriever.invoke("query: " + question)
             domain, confidence = None, 0.0
+            if timer:
+                timer.mark("retrieve")
+
+        retrieved_before_rerank = len(docs) if docs else 0
 
         # Local CrossEncoder — no OpenAI cost today
         if use_rerank and docs:
             docs = rerank_documents(question, docs, top_k=k_val)
+        if timer:
+            timer.mark("rerank")
+            timer.set_meta(
+                retrieved_count=retrieved_before_rerank,
+                reranked_count=len(docs) if docs else 0,
+            )
 
         return docs, domain, confidence
 
@@ -285,10 +312,17 @@ def build_rag_chain(
         std_ret: Any | None,
         mem: Optional[ConversationBufferMemory] = None,
         use_rerank: bool = True,
+        timer: PipelineTimer | None = None,
     ) -> Dict[str, Any]:
         question = x["question"]
         docs, domain, confidence = _retrieve_docs(
-            question, k_val, use_enhanced, enh_ret, std_ret, use_rerank
+            question,
+            k_val,
+            use_enhanced,
+            enh_ret,
+            std_ret,
+            use_rerank,
+            timer=timer,
         )
 
         if domain is not None:
@@ -300,147 +334,180 @@ def build_rag_chain(
         x["retrieved_docs"] = docs
         return x
 
-    _prepare_inputs_bound = partial(
-        _prepare_inputs,
-        k_val=k,
-        use_enhanced=use_enhanced_retrieval,
-        enh_ret=enhanced_retriever,
-        std_ret=retriever,
-        mem=memory,
-        use_rerank=use_reranking,
-    )
-
     def run(question: str) -> Dict[str, Any]:
+        import logging
+        from uuid import uuid4
+
+        logger = logging.getLogger(__name__)
+        timer = PipelineTimer(request_id=str(uuid4()))
+        timer.set_meta(
+            model=DEFAULT_LLM_MODEL if use_openai else (OLLAMA_MODEL or "none"),
+            use_enhanced_retrieval=use_enhanced_retrieval,
+            use_reranking=use_reranking,
+            top_k=k,
+        )
+
         start_time = time.time()
-        anonymizer = get_pii_anonymizer()
-        anon_question, mappings = anonymizer.anonymize(question)
+        try:
+            anonymizer = get_pii_anonymizer()
+            anon_question, mappings = anonymizer.anonymize(question)
+            timer.mark("anonymize")
 
-        cached_result = get_cached_rag_result(
-            anon_question, k, use_enhanced_retrieval
-        )
-        if cached_result:
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.info(
-                "Cache hit for question: %s...",
-                anonymizer.anonymize_for_logging(question, max_len=50),
+            cached_result = get_cached_rag_result(
+                anon_question, k, use_enhanced_retrieval
             )
-            cached = dict(cached_result)
-            if isinstance(cached.get("answer"), str):
-                cached["answer"] = anonymizer.restore(cached["answer"], mappings)
-            return cached
-
-        inputs = {"question": anon_question}
-        prepared = _prepare_inputs_bound(inputs)
-        docs = prepared.get("retrieved_docs", [])
-        context = prepared.get("context", "") or ""
-
-        # Hard gate: never call the LLM with empty / missing Chroma context
-        if RAG_REQUIRE_RETRIEVED_CONTEXT and not _has_usable_context(docs, context):
-            domain = prepared.get("detected_domain")
-            confidence = prepared.get("domain_confidence", 0.0) or 0.0
-            return _no_context_response(
-                start_time=start_time,
-                anonymizer=anonymizer,
-                mappings=mappings,
-                domain=domain,
-                confidence=confidence,
-            )
-
-        chain_inputs: Dict[str, Any] = {
-            "question": anon_question,
-            "context": context,
-        }
-        if memory:
-            history_messages = memory.chat_memory.messages
-            anon_history, history_maps = _anonymize_chat_history(
-                history_messages, anonymizer
-            )
-            mappings = list(mappings) + list(history_maps)
-            chain_inputs["chat_history"] = anon_history
-
-        # Format prompt → messages, then billable generate via quota wrapper
-        messages = prompt.format_messages(**chain_inputs)
-
-        if use_openai:
-            if user is None or db is None:
-                raise HTTPException(
-                    status_code=500,
-                    detail="پیکربندی ناقص محدودیت مصرف برای فراخوانی مدل",
+            if cached_result:
+                timer.mark("cache_lookup")
+                timer.set_meta(cache_hit=True)
+                logger.info(
+                    "Cache hit for question: %s...",
+                    anonymizer.anonymize_for_logging(question, max_len=50),
                 )
+                cached = dict(cached_result)
+                if isinstance(cached.get("answer"), str):
+                    cached["answer"] = anonymizer.restore(cached["answer"], mappings)
+                return cached
+            timer.mark("cache_lookup")
+            timer.set_meta(cache_hit=False)
+
+            inputs = {"question": anon_question}
+            prepared = _prepare_inputs(
+                inputs,
+                k_val=k,
+                use_enhanced=use_enhanced_retrieval,
+                enh_ret=enhanced_retriever,
+                std_ret=retriever,
+                mem=memory,
+                use_rerank=use_reranking,
+                timer=timer,
+            )
+            docs = prepared.get("retrieved_docs", [])
+            context = prepared.get("context", "") or ""
+
+            # Hard gate: never call the LLM with empty / missing Chroma context
+            if RAG_REQUIRE_RETRIEVED_CONTEXT and not _has_usable_context(docs, context):
+                domain = prepared.get("detected_domain")
+                confidence = prepared.get("domain_confidence", 0.0) or 0.0
+                timer.set_meta(no_context=True)
+                return _no_context_response(
+                    start_time=start_time,
+                    anonymizer=anonymizer,
+                    mappings=mappings,
+                    domain=domain,
+                    confidence=confidence,
+                )
+
+            chain_inputs: Dict[str, Any] = {
+                "question": anon_question,
+                "context": context,
+            }
+            if memory:
+                history_messages = memory.chat_memory.messages
+                anon_history, history_maps = _anonymize_chat_history(
+                    history_messages, anonymizer
+                )
+                mappings = list(mappings) + list(history_maps)
+                chain_inputs["chat_history"] = anon_history
+
+            # Format prompt → messages, then billable generate via quota wrapper
+            messages = prompt.format_messages(**chain_inputs)
+            usage_out: Dict[str, Any] = {}
+
+            if use_openai:
+                if user is None or db is None:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="پیکربندی ناقص محدودیت مصرف برای فراخوانی مدل",
+                    )
+                try:
+                    result_text = call_llm_with_quota_check(
+                        messages=messages,
+                        user=user,
+                        db=db,
+                        model=DEFAULT_LLM_MODEL,
+                        pipeline_stage="generate",
+                        max_completion_tokens=LLM_MAX_COMPLETION_TOKENS,
+                        request_id=timer.request_id,
+                        usage_out=usage_out,
+                    )
+                except HTTPException:
+                    raise
+                except QuotaExceeded as e:
+                    raise HTTPException(
+                        status_code=e.status_code, detail=e.message
+                    ) from e
+            else:
+                ollama_chain = prompt | llm | StrOutputParser()
+                result_text = ollama_chain.invoke(chain_inputs)
+
+            timer.mark("generate")
+            if usage_out:
+                timer.set_meta(
+                    prompt_tokens=usage_out.get("prompt_tokens"),
+                    completion_tokens=usage_out.get("completion_tokens"),
+                    cost_usd=usage_out.get("cost_usd"),
+                )
+
+            sources = _extract_citations(result_text, docs)
+            elapsed = time.time() - start_time
+
+            chunk_texts = [getattr(d, "page_content", "") or "" for d in docs]
+            citation_result = validate_citations(result_text, chunk_texts)
+            citation_accuracy = citation_accuracy_score(citation_result)
+
+            if (
+                citation_result.confidence_flag == "unverified"
+                and citation_result.cited_articles
+            ):
+                result_text = prepend_strong_warning(
+                    result_text, reason="citation_unverified"
+                )
+            elif citation_result.confidence_flag == "partial":
+                result_text = prepend_strong_warning(
+                    result_text, reason="partial_citation"
+                )
+
+            if db is not None:
+                persist_citation_quality_log(
+                    db,
+                    result=citation_result,
+                    user_id=getattr(user, "id", None) if user else None,
+                    request_id=timer.request_id,
+                )
+
+            cached_payload = {
+                "answer": result_text,
+                "sources": sources,
+                "response_time_seconds": round(elapsed, 3),
+                "citation_count": len(citation_result.cited_articles),
+                "citation_accuracy": citation_accuracy,
+                "citation_confidence": citation_result.confidence_flag,
+                "cited_articles": citation_result.cited_articles,
+                "unverified_citations": citation_result.unverified_citations,
+                "grounded": True,
+                "no_context": False,
+            }
+
+            if use_enhanced_retrieval:
+                domain = prepared.get("detected_domain")
+                confidence = prepared.get("domain_confidence", 0.0)
+                cached_payload["domain"] = domain.value if domain else None
+                cached_payload["domain_label"] = (
+                    get_domain_label(domain) if domain else None
+                )
+                cached_payload["domain_confidence"] = round(confidence, 2)
+
+            cache_rag_result(
+                anon_question, k, use_enhanced_retrieval, cached_payload, ttl=3600
+            )
+
+            response = dict(cached_payload)
+            response["answer"] = anonymizer.restore(result_text, mappings)
+            return response
+        finally:
             try:
-                result_text = call_llm_with_quota_check(
-                    messages=messages,
-                    user=user,
-                    db=db,
-                    model=DEFAULT_LLM_MODEL,
-                    pipeline_stage="generate",
-                    max_completion_tokens=LLM_MAX_COMPLETION_TOKENS,
-                )
-            except HTTPException:
-                raise
-            except QuotaExceeded as e:
-                raise HTTPException(status_code=e.status_code, detail=e.message) from e
-        else:
-            # Local Ollama — no USD quota
-            ollama_chain = prompt | llm | StrOutputParser()
-            result_text = ollama_chain.invoke(chain_inputs)
-
-        sources = _extract_citations(result_text, docs)
-        elapsed = time.time() - start_time
-
-        chunk_texts = [getattr(d, "page_content", "") or "" for d in docs]
-        citation_result = validate_citations(result_text, chunk_texts)
-        citation_accuracy = citation_accuracy_score(citation_result)
-
-        if (
-            citation_result.confidence_flag == "unverified"
-            and citation_result.cited_articles
-        ):
-            result_text = prepend_strong_warning(
-                result_text, reason="citation_unverified"
-            )
-        elif citation_result.confidence_flag == "partial":
-            result_text = prepend_strong_warning(
-                result_text, reason="partial_citation"
-            )
-
-        if db is not None:
-            persist_citation_quality_log(
-                db,
-                result=citation_result,
-                user_id=getattr(user, "id", None) if user else None,
-            )
-
-        cached_payload = {
-            "answer": result_text,
-            "sources": sources,
-            "response_time_seconds": round(elapsed, 3),
-            "citation_count": len(citation_result.cited_articles),
-            "citation_accuracy": citation_accuracy,
-            "citation_confidence": citation_result.confidence_flag,
-            "cited_articles": citation_result.cited_articles,
-            "unverified_citations": citation_result.unverified_citations,
-            "grounded": True,
-            "no_context": False,
-        }
-
-        if use_enhanced_retrieval:
-            domain = prepared.get("detected_domain")
-            confidence = prepared.get("domain_confidence", 0.0)
-            cached_payload["domain"] = domain.value if domain else None
-            cached_payload["domain_label"] = (
-                get_domain_label(domain) if domain else None
-            )
-            cached_payload["domain_confidence"] = round(confidence, 2)
-
-        cache_rag_result(
-            anon_question, k, use_enhanced_retrieval, cached_payload, ttl=3600
-        )
-
-        response = dict(cached_payload)
-        response["answer"] = anonymizer.restore(result_text, mappings)
-        return response
+                timer.log_summary(logger)
+            except Exception:
+                logger.exception("Failed to log PIPELINE_TIMING")
 
     return run
