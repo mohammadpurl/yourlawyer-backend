@@ -11,7 +11,13 @@ from app.models.user import User, Conversation, Message
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Body
 from pydantic import BaseModel
 
-from app.core.config import UPLOAD_DIRECTORY, DEFAULT_TOP_K, BASE_DIR, IS_PRODUCTION
+from app.core.config import (
+    UPLOAD_DIRECTORY,
+    DEFAULT_TOP_K,
+    BASE_DIR,
+    IS_PRODUCTION,
+    RERANKER_ENABLED,
+)
 from app.core.security import encrypt_bytes, is_encryption_enabled
 from app.core.rate_limit import limiter, get_rate_limit_string
 from app.core.security_utils import (
@@ -418,7 +424,7 @@ async def ask(
             k=k,
             use_enhanced_retrieval=use_enhanced,
             memory=memory,
-            use_reranking=True,
+            use_reranking=RERANKER_ENABLED,
             user=current_user,
             db=db,
         )

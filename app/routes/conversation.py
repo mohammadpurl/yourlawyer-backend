@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.config import DEFAULT_TOP_K
+from app.core.config import DEFAULT_TOP_K, RERANKER_ENABLED
 from app.models.user import User, Conversation, Message
 from app.schemas.conversation import (
     ConversationSummary,
@@ -158,6 +158,7 @@ def ask_in_conversation(
         k=k,
         use_enhanced_retrieval=use_enhanced,
         memory=memory,
+        use_reranking=RERANKER_ENABLED,
         user=current_user,
         db=db,
     )

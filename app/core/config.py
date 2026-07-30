@@ -81,8 +81,10 @@ PII_NER_ENABLED = os.getenv("PII_NER_ENABLED", "false").lower() == "true"
 DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "5"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
+# Cap prior chat turns sent to the LLM (user+assistant messages).
+MAX_CHAT_HISTORY_MESSAGES = int(os.getenv("MAX_CHAT_HISTORY_MESSAGES", "8"))
 
-# Reranker
+# Reranker (CrossEncoder is CPU-heavy; disable via env for lower latency)
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 

@@ -21,6 +21,7 @@ from app.core.config import (
     LLM_MAX_COMPLETION_TOKENS,
     RAG_REQUIRE_RETRIEVED_CONTEXT,
     RAG_NO_CONTEXT_MESSAGE,
+    RERANKER_ENABLED,
 )
 from app.core.cache import (
     cache_rag_result,
@@ -48,12 +49,12 @@ PERSIAN_LEGAL_SYSTEM_PROMPT = """
 شما یک دستیار حقوقی متخصص در قوانین و مقررات جمهوری اسلامی ایران هستید.
 
 محدودیت‌های اجباری (Citation Grounding):
-- تو فقط باید بر اساس متن‌های ارائه‌شده در بخش «منابع بازیابی‌شده» پاسخ بدهی.
-- هرگز از دانش عمومی یا حافظه خودت درباره قوانین ایران استفاده نکن.
-- اگر اطلاعات کافی در منابع ارائه‌شده برای پاسخ به این سؤال وجود ندارد،
-  دقیقاً همین جمله را بگو: «اطلاعات کافی در منابع موجود برای پاسخ دقیق به این سؤال یافت نشد.»
-- هر جا به ماده یا تبصره قانونی اشاره می‌کنی، شماره دقیق آن را از متن منبع نقل کن،
-  نه از حافظه خودت.
+- پاسخ را بر اساس متن‌های بخش «منابع بازیابی‌شده» بنویس؛ از دانش عمومی و حافظهٔ خودت درباره قوانین استفاده نکن.
+- اگر بخشی از منابع به سوال مربوط است، همان بخش را توضیح بده و استناد کن — حتی اگر پوشش کامل نباشد.
+- فقط وقتی هیچ‌یک از منابع حتی به‌صورت جزئی به موضوع سوال مربوط نیست، بگو:
+  «اطلاعات کافی در منابع موجود برای پاسخ دقیق به این سؤال یافت نشد.»
+  و در همان پاسخ کوتاه بگو چه نوع منبعی لازم است (مثلاً قانون مدنی / آیین‌نامه).
+- هر جا به ماده یا تبصره اشاره می‌کنی، شماره را فقط از متن منبع بیاور، نه از حافظه.
 - اگر در سوال placeholderهایی مانند [PII_NAME_1] دیدی، آن‌ها را عیناً در پاسخ نگه دار.
 
 فرمت پاسخ:
@@ -113,18 +114,67 @@ def _get_llm():
     return None
 
 
+def _citation_label(metadata: dict | None) -> str:
+    """Human-readable citation, e.g. «ماده 114 قانون مدنی» — not the upload filename."""
+    meta = metadata or {}
+    kind = str(meta.get("unit_kind") or "").strip()
+    num = str(
+        meta.get("article_number") or meta.get("unit_title") or ""
+    ).strip()
+    law = str(meta.get("law_name") or "").strip()
+
+    if kind and num and law:
+        return f"{kind} {num} {law}"
+    if kind and num:
+        return f"{kind} {num}"
+    if law:
+        return law
+
+    # Last resort: strip path/extension and numeric id prefix from filename
+    raw = str(meta.get("source") or "").strip()
+    if not raw:
+        return ""
+    from pathlib import Path
+    import re
+
+    stem = Path(raw).stem
+    match = re.match(r"^(\d+)[_.\-\s]+(.+)$", stem)
+    if match:
+        return match.group(2).strip() or stem
+    return stem
+
+
 def _extract_citations(answer: str, docs: list) -> list[str]:
-    """Extract citation sources from answer and documents."""
-    sources = []
-    seen = set()
+    """Build unique human-readable citation labels from retrieved chunks."""
+    sources: list[str] = []
+    seen: set[str] = set()
 
     for doc in docs:
-        source = doc.metadata.get("source", "")
-        if source and source not in seen:
-            seen.add(source)
-            sources.append(source)
+        label = _citation_label(getattr(doc, "metadata", None) or {})
+        if not label:
+            continue
+        key = " ".join(label.split())
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append(label)
 
     return sources
+
+
+def _format_context(docs: list) -> str:
+    """Join retrieved chunks with citation labels so the LLM cites articles, not files."""
+    parts: list[str] = []
+    for i, doc in enumerate(docs, 1):
+        content = (getattr(doc, "page_content", "") or "").strip()
+        if not content:
+            continue
+        label = _citation_label(getattr(doc, "metadata", None) or {})
+        if label:
+            parts.append(f"[منبع {i}: {label}]\n{content}")
+        else:
+            parts.append(content)
+    return "\n\n".join(parts)
 
 
 def _anonymize_chat_history(
@@ -154,7 +204,7 @@ def build_rag_chain(
     k: int = DEFAULT_TOP_K,
     use_enhanced_retrieval: bool = True,
     memory: Optional[ConversationBufferMemory] = None,
-    use_reranking: bool = True,
+    use_reranking: bool | None = None,
     user: Optional[User] = None,
     db: Optional[Session] = None,
 ):
@@ -165,12 +215,16 @@ def build_rag_chain(
     if they later call paid models, route them through the same wrapper with
     pipeline_stage='classify'|'rerank'.
     """
+    if use_reranking is None:
+        use_reranking = RERANKER_ENABLED
     llm = _get_llm()
     use_openai = bool(OPENAI_API_KEY)
 
     # Initialize retrievers outside of closures to avoid cell issues
     if use_enhanced_retrieval:
-        enhanced_retriever = EnhancedRetriever(enable_domain_filter=True)
+        # Domain metadata in current corpus is mostly "unknown"; filtering
+        # previously returned 0 docs and triggered the no-context refusal.
+        enhanced_retriever = EnhancedRetriever(enable_domain_filter=False)
         retriever = None
     else:
         vs = get_vectorstore()
@@ -337,7 +391,7 @@ def build_rag_chain(
             x["detected_domain"] = domain
             x["domain_confidence"] = confidence
 
-        context = "\n\n".join(d.page_content for d in docs)
+        context = _format_context(docs)
         x["context"] = context
         x["retrieved_docs"] = docs
         return x
@@ -397,6 +451,12 @@ def build_rag_chain(
                 domain = prepared.get("detected_domain")
                 confidence = prepared.get("domain_confidence", 0.0) or 0.0
                 timer.set_meta(no_context=True)
+                logger.warning(
+                    "RAG no-context gate | request_id=%s | retrieved=%s | domain=%s",
+                    timer.request_id,
+                    len(docs) if docs else 0,
+                    getattr(domain, "value", domain),
+                )
                 return _no_context_response(
                     start_time=start_time,
                     anonymizer=anonymizer,

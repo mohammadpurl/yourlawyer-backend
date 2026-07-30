@@ -34,7 +34,7 @@ class EnhancedRetriever:
     def __init__(
         self,
         collection_name: str = "legal-texts",
-        enable_domain_filter: bool = True,
+        enable_domain_filter: bool = False,
         domain_filter_min_confidence: float = 0.35,
     ):
         self.vectorstore = get_vectorstore(collection_name)
@@ -88,11 +88,24 @@ class EnhancedRetriever:
             return list(docs or [])
         except Exception as e:
             logger.warning(
-                "Chroma retrieve failed (filter=%s): %s",
+                "Chroma retriever.invoke failed (filter=%s): %s — trying similarity_search",
                 search_kwargs.get("filter"),
                 e,
             )
-            return []
+            try:
+                k = int(search_kwargs.get("k") or 5)
+                filt = search_kwargs.get("filter")
+                if filt:
+                    return list(
+                        self.vectorstore.similarity_search(
+                            query_text, k=k, filter=filt
+                        )
+                        or []
+                    )
+                return list(self.vectorstore.similarity_search(query_text, k=k) or [])
+            except Exception as e2:
+                logger.warning("Chroma similarity_search also failed: %s", e2)
+                return []
 
     def retrieve_with_classification(
         self, question: str, k: int = 5
