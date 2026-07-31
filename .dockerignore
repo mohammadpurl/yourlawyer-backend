@@ -48,10 +48,18 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Storage (این‌ها در volume نگهداری می‌شوند)
-storage/chroma/
-storage/*.db
-data/uploads/*
+# Storage / local caches (mounted as volumes at runtime — never bake into image)
+storage/
+storage/**
+data/uploads/
+data/uploads/**
+*.incomplete
+
+# Local diagnostics / one-off scripts under storage were already covered;
+# also skip Hugging Face / model caches if present at repo root
+huggingface/
+**/models--*/
+**/*.safetensors
 
 # Temporary files
 *.tmp

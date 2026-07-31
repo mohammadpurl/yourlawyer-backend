@@ -7,27 +7,28 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# نصب dependencies سیستم
+# نصب dependencies سیستم (util-linux برای runuser در entrypoint)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     curl \
+    util-linux \
     && rm -rf /var/lib/apt/lists/*
 
-# ایجاد دایرکتوری کاری
+# ایجاد دایرکتوری کاری و کاربر غیرprivileged قبل از کپی کد
 WORKDIR /app
+RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 
 # کپی requirements.txt و نصب dependencies
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install -r requirements.txt
 
-# کپی کد پروژه
+# کپی کد پروژه (storage/ مدل‌ها و کش HF در .dockerignore هستند)
 COPY . .
 
-# ایجاد دایرکتوری‌های لازم برای storage و کاربر غیرprivileged
-RUN mkdir -p /app/storage/chroma /app/data/uploads /app/storage && \
-    useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser && \
+# دایرکتوری‌های runtime + مالکیت (بدون chown روی گیگابایت کش محلی)
+RUN mkdir -p /app/storage/chroma /app/storage/models /app/storage/huggingface /app/data/uploads && \
     chown -R appuser:appuser /app && \
     chmod +x /app/docker-entrypoint.sh
 
