@@ -264,6 +264,22 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
 
 
 def chunk_text(text: str, source: str) -> List[Document]:
+    from app.services.content_validation import (
+        append_rejection,
+        validate_document_content,
+    )
+
+    ok, reason = validate_document_content(source, text)
+    if not ok:
+        append_rejection(
+            {
+                "source": source,
+                "reason": reason,
+                "content_chars": len(text or ""),
+                "content_head": (text or "")[:240].replace("\n", " "),
+            }
+        )
+        return []
     return _legal_chunk_documents(text, source)
 
 

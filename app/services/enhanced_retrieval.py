@@ -12,6 +12,7 @@ from app.services.question_classifier import (
     classify_question,
 )
 from app.services.vectorstore import get_vectorstore
+from app.core.config import CHROMA_COLLECTION
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,11 @@ class EnhancedRetriever:
 
     def __init__(
         self,
-        collection_name: str = "legal-texts",
+        collection_name: str | None = None,
         enable_domain_filter: bool = False,
         domain_filter_min_confidence: float = 0.35,
     ):
-        self.vectorstore = get_vectorstore(collection_name)
+        self.vectorstore = get_vectorstore(collection_name or CHROMA_COLLECTION)
         self.enable_domain_filter = enable_domain_filter
         self.domain_filter_min_confidence = domain_filter_min_confidence
 

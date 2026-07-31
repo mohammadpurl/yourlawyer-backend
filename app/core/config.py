@@ -18,6 +18,9 @@ def _ensure_dir(path: Path) -> None:
         pass
 
 
+# Active Chroma collection name (switch to legal-texts-v2 after clean rebuild)
+CHROMA_COLLECTION = os.getenv("CHROMA_COLLECTION", "legal-texts-v2")
+
 # Storage directories
 PERSIST_DIRECTORY = Path(
     os.getenv("CHROMA_DB_DIR", BASE_DIR / "storage" / "chroma")

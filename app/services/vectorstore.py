@@ -2,7 +2,7 @@ from typing import List, Optional, Set
 import os
 import logging
 
-from app.core.config import HF_TIMEOUT, PERSIST_DIRECTORY, EMBEDDING_MODEL, HF_HOME
+from app.core.config import HF_TIMEOUT, PERSIST_DIRECTORY, EMBEDDING_MODEL, HF_HOME, CHROMA_COLLECTION
 
 # Must configure Hugging Face Hub before importing huggingface-dependent packages.
 
@@ -45,14 +45,15 @@ logger = logging.getLogger(__name__)
 _embeddings_cache: HuggingFaceEmbeddings | None = None
 
 
-def _get_chroma_collection(collection_name: str = "legal-texts"):
+def _get_chroma_collection(collection_name: str | None = None):
     """Access Chroma collection without loading the embedding model."""
     import chromadb
 
+    name = collection_name or CHROMA_COLLECTION
     os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
     client = chromadb.PersistentClient(path=PERSIST_DIRECTORY)
     try:
-        return client.get_collection(collection_name)
+        return client.get_collection(name)
     except Exception:
         return None
 
@@ -125,16 +126,16 @@ def ensure_embeddings_ready() -> None:
     get_embeddings()
 
 
-def get_vectorstore(collection_name: str = "legal-texts") -> Chroma:
+def get_vectorstore(collection_name: str | None = None) -> Chroma:
     embeddings = get_embeddings()
     return Chroma(
-        collection_name=collection_name,
+        collection_name=collection_name or CHROMA_COLLECTION,
         embedding_function=embeddings,
         persist_directory=PERSIST_DIRECTORY,
     )
 
 
-def get_existing_content_hashes(collection_name: str = "legal-texts") -> Set[str]:
+def get_existing_content_hashes(collection_name: str | None = None) -> Set[str]:
     """Return content hashes for all vectors (metadata or computed from page_content)."""
     try:
         collection = _get_chroma_collection(collection_name)
@@ -211,7 +212,7 @@ def _prepare_documents_for_insert(
 
 def add_documents(
     documents: List[Document],
-    collection_name: str = "legal-texts",
+    collection_name: str | None = None,
     existing_hashes: Optional[Set[str]] = None,
 ) -> int:
     if not documents:
@@ -220,6 +221,7 @@ def add_documents(
     import logging
 
     logger = logging.getLogger(__name__)
+    collection_name = collection_name or CHROMA_COLLECTION
 
     if existing_hashes is None:
         existing_hashes = get_existing_content_hashes(collection_name)
@@ -301,7 +303,7 @@ def add_documents(
         return total_added
 
 
-def get_stored_sources(collection_name: str = "legal-texts") -> dict[str, int]:
+def get_stored_sources(collection_name: str | None = None) -> dict[str, int]:
     """
     دریافت لیست تمام فایل‌های ذخیره شده در vectordb به همراه تعداد chunks هر فایل.
 
@@ -311,6 +313,7 @@ def get_stored_sources(collection_name: str = "legal-texts") -> dict[str, int]:
     import logging
 
     logger = logging.getLogger(__name__)
+    collection_name = collection_name or CHROMA_COLLECTION
     collection = _get_chroma_collection(collection_name)
 
     try:
@@ -376,7 +379,8 @@ def get_stored_sources(collection_name: str = "legal-texts") -> dict[str, int]:
         return {}
 
 
-def stats(collection_name: str = "legal-texts") -> dict:
+def stats(collection_name: str | None = None) -> dict:
+    collection_name = collection_name or CHROMA_COLLECTION
     collection = _get_chroma_collection(collection_name)
     try:
         count = collection.count() if collection is not None else 0
