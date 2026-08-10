@@ -19,6 +19,6 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")  # e.g., "llama3.1:8b"
 
 # Retrieval defaults
-DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "5"))
+DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "8"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))

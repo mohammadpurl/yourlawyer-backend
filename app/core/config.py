@@ -83,7 +83,7 @@ PII_ANONYMIZATION_ENABLED = (
 PII_NER_ENABLED = os.getenv("PII_NER_ENABLED", "false").lower() == "true"
 
 # Retrieval defaults
-DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "5"))
+DEFAULT_TOP_K = int(os.getenv("DEFAULT_TOP_K", "8"))
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "120"))
 # Cap prior chat turns sent to the LLM (user+assistant messages).

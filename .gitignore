@@ -61,13 +61,34 @@ vector_stores/
 
 # Runtime storage (do not commit Chroma / models / HF cache)
 storage/chroma/
+storage/chroma_clean/
+storage/chroma_v2/
+storage/chroma_old_backup/
 storage/models/
 storage/huggingface/
+storage/huggingface_fresh/
 storage/*.log
 storage/ingest_manifest.json
 storage/complete_ingest*.json
 storage/complete_ingest*.log
 storage/audit_report*.json
+
+# Ingest checkpoints & local audit artifacts (transfer chroma via WinSCP, not git)
+storage/outputs_watch_ingest_checkpoint.json
+storage/outputs_watch_ingest_status.json
+storage/rescrape_status.json
+storage/ingestion_rejected.json
+storage/_*
+storage/*_report.json
+storage/*_report.md
+storage/*_checkpoint.json
+storage/*_validation.json
+storage/*_audit.json
+storage/*_plan.json
+storage/content_*.json
+storage/full_corpus_corruption_scan.json
+storage/criminal_pending_ids.json
+storage/rag_comprehensiveness_*.json
 
 # Logs
 *.log
