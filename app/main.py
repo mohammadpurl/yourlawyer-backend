@@ -401,12 +401,15 @@ async def http_exception_logger(request: Request, exc: HTTPException):
     لاگر مرکزی برای همه HTTPException ها.
     """
     error_logger = logging.getLogger("app.errors")
+    log_kwargs: dict = {}
+    if exc.status_code >= 500:
+        log_kwargs["exc_info"] = True
     error_logger.error(
         "HTTPException | status=%s | path=%s | detail=%s",
         exc.status_code,
         request.url.path,
         exc.detail,
-        exc_info=True,
+        **log_kwargs,
     )
     # همان detail را به فرانت برمی‌گردانیم
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})

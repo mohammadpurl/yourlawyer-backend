@@ -23,6 +23,9 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     answer: str
     sources: List[str] = []
+    # When quota/plan blocks the request, answer carries the Persian message for the UI.
+    is_error: bool = False
+    error_code: Optional[int] = None
     conversation_id: Optional[int] = None
     response_time_seconds: Optional[float] = None
     citation_count: Optional[int] = None

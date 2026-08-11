@@ -40,8 +40,8 @@ from app.services.folder_ingestion import (
 )
 from app.services.vectorstore import add_documents, stats, get_stored_sources
 from app.services.rag import build_rag_chain
-from app.dependencies.quota import check_quota
-from app.services.quota import enforce_request_quota
+from app.services.auth import get_current_user
+from app.services.quota import enforce_request_quota, get_quota_block
 
 from app.schemas.rag import (
     AskRequest,
@@ -320,7 +320,7 @@ async def ask(
     request: Request,
     req: AskRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(check_quota),
+    current_user: User = Depends(get_current_user),
 ):
     """
     ارسال سوال به سیستم RAG. اگر conversation_id ارسال شود، سوال و پاسخ به صورت خودکار ذخیره می‌شوند.
@@ -343,8 +343,14 @@ async def ask(
         },
     )
 
-    # Full free/paid quota pre-check (also done in check_quota dependency)
-    enforce_request_quota(current_user, db, "qa")
+    quota_block = get_quota_block(current_user, db, "qa")
+    if quota_block is not None:
+        return AskResponse(
+            answer=quota_block.message,
+            sources=[],
+            is_error=True,
+            error_code=quota_block.status_code,
+        )
 
     k = req.top_k or DEFAULT_TOP_K
 

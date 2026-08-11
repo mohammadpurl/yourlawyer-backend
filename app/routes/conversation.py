@@ -17,8 +17,8 @@ from app.schemas.rag import AskResponse
 from app.services.auth import get_current_user
 from app.services.rag import build_rag_chain
 from app.services.memory import create_memory_from_messages
-from app.dependencies.quota import check_quota
-from app.services.quota import enforce_request_quota
+from app.services.auth import get_current_user
+from app.services.quota import get_quota_block
 
 
 
@@ -86,7 +86,7 @@ def ask_in_conversation(
     conversation_id: int,
     payload: ChatRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(check_quota),
+    current_user: User = Depends(get_current_user),
 ):
     """
     ارسال یک سوال در دل یک گفتگو؛ سوال و پاسخ به صورت پیام ذخیره می‌شوند
@@ -119,7 +119,15 @@ def ask_in_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail="گفتگو پیدا نشد")
 
-    enforce_request_quota(current_user, db, "qa")
+    quota_block = get_quota_block(current_user, db, "qa")
+    if quota_block is not None:
+        return ChatResponse(
+            conversation_id=conv.id,
+            answer=quota_block.message,
+            sources=[],
+            is_error=True,
+            error_code=quota_block.status_code,
+        )
 
     # ذخیره پیام کاربر در دیتابیس (با conversation_id)
     user_msg = Message(

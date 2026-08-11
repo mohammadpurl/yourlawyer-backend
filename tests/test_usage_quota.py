@@ -290,6 +290,31 @@ def test_enforce_free_question_cap_429(fake_redis, free_user):
     assert exc.value.status_code == 429
 
 
+def test_admin_exempt_from_quota(fake_redis, free_user):
+    db, user = free_user
+    user.is_admin = True
+    fake_redis.store[user_question_key(42)] = 999
+    fake_redis.store[user_cost_key(42)] = 999.0
+    enforce_request_quota(user, db, "qa")  # no raise
+    reserve_cost(db, user, 1.0)  # no raise
+
+
+def test_get_quota_block_returns_message(fake_redis, free_user):
+    db, user = free_user
+    fake_redis.store[user_question_key(42)] = 5
+    block = quota_mod.get_quota_block(user, db, "qa")
+    assert block is not None
+    assert block.status_code == 429
+    assert "پلن رایگان" in block.message
+
+
+def test_get_quota_block_none_for_admin(fake_redis, free_user):
+    db, user = free_user
+    user.is_admin = True
+    fake_redis.store[user_question_key(42)] = 5
+    assert quota_mod.get_quota_block(user, db, "qa") is None
+
+
 def test_enforce_system_free_503(fake_redis, free_user):
     db, user = free_user
     fake_redis.store[system_free_cost_key()] = 18.0

@@ -83,6 +83,34 @@ class QuotaExceeded(Exception):
         super().__init__(message)
 
 
+@dataclass
+class QuotaBlock:
+    """Quota rejection surfaced to chat endpoints (HTTP 200 + error body)."""
+
+    status_code: int
+    message: str
+
+
+def is_quota_exempt(user: User) -> bool:
+    """Admins (is_admin / ADMIN_MOBILES) bypass monthly plan limits."""
+    return bool(getattr(user, "is_admin", False))
+
+
+def get_quota_block(
+    user: User,
+    db: Session,
+    request_type: RequestType = "qa",
+) -> QuotaBlock | None:
+    """Return quota error for chat UX, or None if the request may proceed."""
+    try:
+        enforce_request_quota(user, db, request_type)
+        return None
+    except HTTPException as e:
+        detail = e.detail
+        message = detail if isinstance(detail, str) else str(detail)
+        return QuotaBlock(status_code=e.status_code, message=message)
+
+
 def current_period() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m")
 
@@ -317,6 +345,8 @@ def reserve_cost(db: Session, user: User, estimated_usd: float) -> None:
     Atomically reserve estimated USD against user plan cap.
     Free users also reserve against the shared system free pool.
     """
+    if is_quota_exempt(user):
+        return
     if not QUOTA_ENABLED:
         return
     if estimated_usd <= 0:
@@ -349,6 +379,8 @@ def reserve_cost(db: Session, user: User, estimated_usd: float) -> None:
 def check_quota_available(db: Session, user: User, estimated_usd: float = 0.01) -> None:
     """Pre-flight cost check (raises HTTPException)."""
     try:
+        if is_quota_exempt(user):
+            return
         if not QUOTA_ENABLED:
             return
         client = _require_redis()
@@ -381,6 +413,8 @@ def enforce_request_quota(
     Unit pre-check before ask / upload.
     Raises HTTPException with plan-aligned status codes.
     """
+    if is_quota_exempt(user):
+        return
     if not QUOTA_ENABLED:
         # Still gate free uploads even if USD quota disabled
         if request_type == "document_review" and not plan_allows_document_review(

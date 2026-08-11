@@ -153,4 +153,4 @@ def get_current_user(
     user = get_user_by_username(db, username)
     if user is None:
         raise credentials_error
-    return user
+    return sync_admin_flag(user, db)

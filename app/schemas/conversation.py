@@ -41,6 +41,8 @@ class ChatResponse(BaseModel):
     conversation_id: int
     answer: str
     sources: List[str] = []
+    is_error: bool = False
+    error_code: Optional[int] = None
     response_time_seconds: Optional[float] = None
     citation_count: Optional[int] = None
     citation_accuracy: Optional[float] = None
