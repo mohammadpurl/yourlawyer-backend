@@ -55,6 +55,14 @@ data/uploads/
 data/uploads/**
 *.incomplete
 
+# Chroma / DB dumps — often left at repo root on the server after WinSCP
+chroma_snapshot.tar
+**/chroma_snapshot.tar
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+
 # Local diagnostics / one-off scripts under storage were already covered;
 # also skip Hugging Face / model caches if present at repo root
 huggingface/
