@@ -71,6 +71,16 @@ PERSIAN_LEGAL_SYSTEM_PROMPT = """
 NO_CONTEXT_ANSWER = RAG_NO_CONTEXT_MESSAGE
 
 
+def rag_error_payload(message: str, status_code: int = 400) -> Dict[str, Any]:
+    """Structured RAG failure returned as HTTP 200 so chat UIs can show the message."""
+    return {
+        "answer": message,
+        "sources": [],
+        "is_error": True,
+        "error_code": status_code,
+    }
+
+
 def _has_usable_context(docs: list, context: str) -> bool:
     """True only when retrieval returned non-empty grounded chunks."""
     if not docs:
@@ -488,9 +498,9 @@ def build_rag_chain(
 
             if use_openai:
                 if user is None or db is None:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="پیکربندی ناقص محدودیت مصرف برای فراخوانی مدل",
+                    return rag_error_payload(
+                        "پیکربندی ناقص محدودیت مصرف برای فراخوانی مدل",
+                        500,
                     )
                 try:
                     result_text = call_llm_with_quota_check(
@@ -503,12 +513,11 @@ def build_rag_chain(
                         request_id=timer.request_id,
                         usage_out=usage_out,
                     )
-                except HTTPException:
-                    raise
+                except HTTPException as e:
+                    detail = e.detail if isinstance(e.detail, str) else str(e.detail)
+                    return rag_error_payload(detail, e.status_code)
                 except QuotaExceeded as e:
-                    raise HTTPException(
-                        status_code=e.status_code, detail=e.message
-                    ) from e
+                    return rag_error_payload(e.message, e.status_code)
             else:
                 ollama_chain = prompt | llm | StrOutputParser()
                 result_text = ollama_chain.invoke(chain_inputs)

@@ -15,13 +15,9 @@ from app.schemas.conversation import (
 )
 from app.schemas.rag import AskResponse
 from app.services.auth import get_current_user
+from app.services.quota import get_quota_block
 from app.services.rag import build_rag_chain
 from app.services.memory import create_memory_from_messages
-from app.services.auth import get_current_user
-from app.services.quota import get_quota_block
-
-
-
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
@@ -177,6 +173,15 @@ def ask_in_conversation(
     # Question count / USD usage recorded inside LLM choke-point (record_usage)
 
     # خروجی ممکن است دیکشنری ساده (fallback) یا پاسخ با فیلدهای بیشتر باشد
+    if isinstance(result, dict) and result.get("is_error"):
+        return ChatResponse(
+            conversation_id=conv.id,
+            answer=result.get("answer") or "",
+            sources=result.get("sources") or [],
+            is_error=True,
+            error_code=result.get("error_code"),
+        )
+
     answer = result.get("answer") or ""  # type: ignore[union-attr]
     sources = result.get("sources", [])  # type: ignore[union-attr]
 

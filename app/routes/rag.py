@@ -439,6 +439,12 @@ async def ask(
 
         result = await asyncio.to_thread(rag, req.question)
 
+        # Quota / LLM errors are returned inside the RAG payload (HTTP 200).
+        if isinstance(result, dict) and result.get("is_error"):
+            if conversation is not None:
+                result["conversation_id"] = conversation.id
+            return AskResponse(**result)
+
         # بررسی اینکه result یک dict است و فیلدهای مورد نیاز را دارد
         if not isinstance(result, dict):
             raise ValueError(f"Expected dict from RAG chain, got {type(result)}")
@@ -517,9 +523,15 @@ async def ask(
 
             return AskResponse(**minimal_result)
 
-    except HTTPException:
-        # Re-raise HTTP exceptions as-is
-        raise
+    except HTTPException as e:
+        detail = e.detail if isinstance(e.detail, str) else str(e.detail)
+        return AskResponse(
+            answer=detail,
+            sources=[],
+            is_error=True,
+            error_code=e.status_code,
+            conversation_id=conversation.id if conversation is not None else None,
+        )
     except Exception as e:
         logger.error(f"Error in RAG endpoint: {e}", exc_info=True)
 
