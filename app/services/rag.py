@@ -10,8 +10,8 @@ from langchain_classic.memory import ConversationBufferMemory
 
 from app.services.vectorstore import get_vectorstore
 from app.services.enhanced_retrieval import EnhancedRetriever
-from app.services.question_classifier import classify_question, get_domain_label
-from app.services.reranker import rerank_documents
+from app.services.question_classifier import get_domain_label
+from app.services.reranker import rerank_documents, score_documents, filter_by_min_score
 from app.services.pipeline_timing import PipelineTimer
 from app.core.config import (
     DEFAULT_TOP_K,
@@ -22,12 +22,11 @@ from app.core.config import (
     RAG_REQUIRE_RETRIEVED_CONTEXT,
     RAG_NO_CONTEXT_MESSAGE,
     RERANKER_ENABLED,
+    ENABLE_DOMAIN_FILTERED_RETRIEVAL,
 )
 from app.core.cache import (
     cache_rag_result,
     get_cached_rag_result,
-    cache_classification,
-    get_cached_classification,
 )
 from app.core.pii_anonymizer import get_pii_anonymizer
 from langchain_core.messages import AIMessage, HumanMessage, BaseMessage
@@ -328,31 +327,43 @@ def build_rag_chain(
         """Retrieve documents based on configuration.
 
         When ``timer`` is provided, stages classify / retrieve / rerank are marked
-        separately (classify is local keyword/heuristic; retrieve is Chroma+embed).
+        separately (classify is taxonomy+heuristic; retrieve is Chroma+embed).
         """
         retrieve_k = k_val * 2 if use_rerank else k_val
         retrieved_before_rerank = 0
+        tax_meta: Dict[str, Any] = {}
 
         if use_enhanced and enh_retriever:
-            # Split classify vs retrieve for timing (same logic as
-            # retrieve_with_classification, including low-confidence skip +
-            # empty-filter fallback inside EnhancedRetriever.retrieve).
-            domain, confidence = classify_question(question)
+            from app.services.taxonomy import classify_confident
+            from app.services.question_classifier import taxonomy_to_legacy
+
+            tax = classify_confident(question)
+            tax_meta = tax
+            domain = taxonomy_to_legacy(tax.get("domain"))
+            confidence = float(tax.get("confidence") or 0.0)
             if timer:
                 timer.mark("classify")
-            apply_domain = domain
-            if confidence < getattr(
-                enh_retriever, "domain_filter_min_confidence", 0.35
-            ):
-                from app.services.question_classifier import LegalDomain as _LD
+                timer.set_meta(
+                    taxonomy_domain=tax.get("domain"),
+                    taxonomy_subdomain=tax.get("subdomain"),
+                    taxonomy_confidence=tax.get("confidence"),
+                    taxonomy_confident=tax.get("confident"),
+                )
 
-                apply_domain = _LD.UNKNOWN
-            docs = enh_retriever.retrieve(question, k=retrieve_k, domain=apply_domain)
+            tax_domain = tax.get("domain") if tax.get("confident") else None
+            tax_sub = tax.get("subdomain") if tax.get("confident") else None
+
+            docs = enh_retriever.retrieve(
+                question,
+                k=retrieve_k,
+                taxonomy_domain=tax_domain if ENABLE_DOMAIN_FILTERED_RETRIEVAL else None,
+                taxonomy_subdomain=tax_sub if ENABLE_DOMAIN_FILTERED_RETRIEVAL else None,
+            )
             if timer:
                 timer.mark("retrieve")
         elif std_retriever:
             if timer:
-                timer.mark("classify")  # skipped → ~0ms slot for schema consistency
+                timer.mark("classify")
             docs = std_retriever.invoke("query: " + question)
             domain, confidence = None, 0.0
             if timer:
@@ -369,14 +380,19 @@ def build_rag_chain(
 
         retrieved_before_rerank = len(docs) if docs else 0
 
-        # Local CrossEncoder — no OpenAI cost today
-        if use_rerank and docs:
-            docs = rerank_documents(question, docs, top_k=k_val)
+        # Always apply relevance score filter (CrossEncoder or keyword fallback)
+        if docs:
+            if use_rerank:
+                docs = rerank_documents(question, docs, top_k=k_val)
+            else:
+                scored = score_documents(question, docs)
+                docs = filter_by_min_score(scored)[:k_val]
         if timer:
             timer.mark("rerank")
             timer.set_meta(
                 retrieved_count=retrieved_before_rerank,
                 reranked_count=len(docs) if docs else 0,
+                low_trust_retrieval=not bool(tax_meta.get("confident")),
             )
 
         return docs, domain, confidence

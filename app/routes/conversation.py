@@ -21,7 +21,8 @@ from app.services.memory import create_memory_from_messages
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
 
-@router.get("/", response_model=List[ConversationSummary])
+@router.get("", response_model=List[ConversationSummary])
+@router.get("/", response_model=List[ConversationSummary], include_in_schema=False)
 def list_conversations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -38,7 +39,8 @@ def list_conversations(
     return convs
 
 
-@router.post("/", response_model=ConversationSummary)
+@router.post("", response_model=ConversationSummary)
+@router.post("/", response_model=ConversationSummary, include_in_schema=False)
 def create_conversation(
     payload: CreateConversationRequest,
     db: Session = Depends(get_db),

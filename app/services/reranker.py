@@ -1,9 +1,18 @@
 """Re-ranking service for improving RAG retrieval accuracy."""
 
-from typing import List, Optional
-from langchain_core.documents import Document
+from __future__ import annotations
+
 import logging
-from app.core.config import RERANKER_ENABLED, RERANKER_MODEL
+import math
+from typing import List, Optional, Tuple
+
+from langchain_core.documents import Document
+
+from app.core.config import (
+    RERANKER_ENABLED,
+    RERANKER_MODEL,
+    MIN_SOURCE_RELEVANCE_SCORE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +24,6 @@ def get_reranker_model():
     """Get or load reranker model."""
     global _reranker_model, _reranker_loading_attempted
 
-    # Check if reranking is disabled via configuration
     if not RERANKER_ENABLED:
         return None
 
@@ -25,72 +33,131 @@ def get_reranker_model():
             import os
             from sentence_transformers import CrossEncoder
 
-            # تنظیم timeout برای Hugging Face
             hf_timeout = int(os.getenv("HF_TIMEOUT", "300"))
             os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", str(hf_timeout))
 
             logger.info(
-                f"Loading reranker model: {RERANKER_MODEL} (timeout: {hf_timeout}s)"
+                "Loading reranker model: %s (timeout: %ss)",
+                RERANKER_MODEL,
+                hf_timeout,
             )
             _reranker_model = CrossEncoder(RERANKER_MODEL)
-            logger.info(f"Reranker model '{RERANKER_MODEL}' loaded successfully")
+            logger.info("Reranker model '%s' loaded successfully", RERANKER_MODEL)
 
         except Exception as e:
             logger.warning(
-                f"Could not load reranker model '{RERANKER_MODEL}': {e}. "
-                "Re-ranking will be disabled. To disable reranking entirely, set RERANKER_ENABLED=false in environment variables. "
-                f"If timeout issues persist, try increasing HF_TIMEOUT (current: {os.getenv('HF_TIMEOUT', '300')}s)"
+                "Could not load reranker model '%s': %s. "
+                "Re-ranking will be disabled. Set RERANKER_ENABLED=false to silence. "
+                "HF_TIMEOUT=%s",
+                RERANKER_MODEL,
+                e,
+                os.getenv("HF_TIMEOUT", "300") if "os" in dir() else "300",
             )
             return None
 
     return _reranker_model
 
 
+def _sigmoid(x: float) -> float:
+    # numerically stable
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    z = math.exp(x)
+    return z / (1.0 + z)
+
+
+def _keyword_relevance(query: str, doc: Document) -> float:
+    """Cheap 0..1 fallback when CrossEncoder is off."""
+    q_tokens = [t for t in (query or "").replace("\u200c", " ").split() if len(t) > 1]
+    if not q_tokens:
+        return 0.0
+    meta = getattr(doc, "metadata", None) or {}
+    blob = " ".join(
+        [
+            getattr(doc, "page_content", "") or "",
+            str(meta.get("law_name") or ""),
+            str(meta.get("source") or ""),
+            str(meta.get("domain") or ""),
+            str(meta.get("subdomain") or ""),
+        ]
+    )
+    hits = sum(1 for t in q_tokens if t in blob)
+    # Boost if distinctive multi-char tokens from query appear in law_name
+    law = str(meta.get("law_name") or "")
+    boost = 0.25 if any(len(t) > 2 and t in law for t in q_tokens) else 0.0
+    return min(1.0, hits / max(1, len(q_tokens)) + boost)
+
+
+def score_documents(
+    query: str,
+    documents: List[Document],
+) -> List[Tuple[Document, float]]:
+    """Return (doc, score∈[0,1]) pairs sorted descending by relevance."""
+    if not documents:
+        return []
+
+    model = get_reranker_model()
+    if not model:
+        scored = [(d, _keyword_relevance(query, d)) for d in documents]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
+
+    try:
+        pairs = [[query, doc.page_content] for doc in documents]
+        raw_scores = model.predict(pairs)
+        scored_docs = [
+            (doc, _sigmoid(float(s))) for doc, s in zip(documents, raw_scores)
+        ]
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
+        return scored_docs
+    except Exception as e:
+        logger.warning("Error during re-ranking: %s. Using keyword scores.", e)
+        scored = [(d, _keyword_relevance(query, d)) for d in documents]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored
+
+
+def filter_by_min_score(
+    scored: List[Tuple[Document, float]],
+    min_score: float | None = None,
+) -> List[Document]:
+    """Keep only documents at/above relevance threshold."""
+    threshold = MIN_SOURCE_RELEVANCE_SCORE if min_score is None else float(min_score)
+    kept = [doc for doc, score in scored if score >= threshold]
+    dropped = len(scored) - len(kept)
+    if dropped:
+        logger.info(
+            "Dropped %s/%s chunks below MIN_SOURCE_RELEVANCE_SCORE=%.3f",
+            dropped,
+            len(scored),
+            threshold,
+        )
+    return kept
+
+
 def rerank_documents(
     query: str,
     documents: List[Document],
     top_k: Optional[int] = None,
+    min_score: float | None = None,
 ) -> List[Document]:
     """
-    Re-rank documents based on relevance to query.
+    Re-rank documents and drop those below MIN_SOURCE_RELEVANCE_SCORE.
 
-    Args:
-        query: Search query
-        documents: List of documents to re-rank
-        top_k: Number of top documents to return (None = return all)
-
-    Returns:
-        Re-ranked list of documents
+    Returns may be empty — callers should treat that as no usable context.
     """
     if not documents:
         return documents
 
-    model = get_reranker_model()
-    if not model:
-        # If reranker not available, return original order
-        return documents[:top_k] if top_k else documents
+    scored = score_documents(query, documents)
+    kept = filter_by_min_score(scored, min_score=min_score)
+    if top_k is not None:
+        kept = kept[:top_k]
 
-    try:
-        # Prepare pairs for scoring
-        pairs = [[query, doc.page_content] for doc in documents]
-
-        # Get scores
-        scores = model.predict(pairs)
-
-        # Sort by score (descending)
-        scored_docs = list(zip(documents, scores))
-        scored_docs.sort(key=lambda x: x[1], reverse=True)
-
-        # Return top_k documents
-        reranked = [doc for doc, score in scored_docs]
-        if top_k:
-            reranked = reranked[:top_k]
-
-        logger.info(
-            f"Re-ranked {len(documents)} documents, returning top {len(reranked)}"
-        )
-        return reranked
-
-    except Exception as e:
-        logger.warning(f"Error during re-ranking: {e}. Returning original order.")
-        return documents[:top_k] if top_k else documents
+    logger.info(
+        "Re-ranked %s documents, returning %s after score filter",
+        len(documents),
+        len(kept),
+    )
+    return kept

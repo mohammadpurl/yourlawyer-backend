@@ -89,7 +89,7 @@ storage/content_*.json
 storage/full_corpus_corruption_scan.json
 storage/criminal_pending_ids.json
 storage/rag_comprehensiveness_*.json
-
+storage/chroma_snapshot.tar
 # Logs
 *.log
 logs/

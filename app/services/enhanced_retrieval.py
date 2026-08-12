@@ -1,4 +1,4 @@
-"""Enhanced retrieval with domain filtering and metadata support."""
+"""Enhanced retrieval with taxonomy domain filtering."""
 
 from __future__ import annotations
 
@@ -7,16 +7,15 @@ from typing import Any, Dict, List, Optional
 
 from langchain_core.documents import Document
 
-from app.services.question_classifier import (
-    LegalDomain,
-    classify_question,
-)
+from app.services.question_classifier import LegalDomain, taxonomy_to_legacy
 from app.services.vectorstore import get_vectorstore
-from app.core.config import CHROMA_COLLECTION
+from app.core.config import (
+    CHROMA_COLLECTION,
+    ENABLE_DOMAIN_FILTERED_RETRIEVAL,
+)
 
 logger = logging.getLogger(__name__)
 
-# E5 embedding models expect this prefix on queries.
 _QUERY_PREFIX = "query: "
 
 
@@ -30,7 +29,7 @@ def _as_e5_query(query: str) -> str:
 
 
 class EnhancedRetriever:
-    """Retriever with domain filtering and metadata support."""
+    """Retriever with hierarchical taxonomy metadata filters."""
 
     def __init__(
         self,
@@ -39,6 +38,7 @@ class EnhancedRetriever:
         domain_filter_min_confidence: float = 0.35,
     ):
         self.vectorstore = get_vectorstore(collection_name or CHROMA_COLLECTION)
+        # Kept for API compat; filtering is controlled by ENABLE_DOMAIN_FILTERED_RETRIEVAL
         self.enable_domain_filter = enable_domain_filter
         self.domain_filter_min_confidence = domain_filter_min_confidence
 
@@ -48,48 +48,63 @@ class EnhancedRetriever:
         k: int = 5,
         domain: Optional[LegalDomain] = None,
         document_type: Optional[str] = None,
+        taxonomy_domain: Optional[str] = None,
+        taxonomy_subdomain: Optional[str] = None,
     ) -> List[Document]:
-        """Retrieve documents with optional filtering.
-
-        If a metadata filter returns no hits (common when corpus is tagged
-        ``legal_domain=unknown``), falls back to an unfiltered search so RAG
-        still has grounded chunks.
-        """
+        """Retrieve with optional taxonomy domain/subdomain filter + fallbacks."""
         query_text = _as_e5_query(query)
         search_kwargs: Dict[str, Any] = {"k": k}
-        where_clause: Dict[str, Any] | None = None
 
-        if self.enable_domain_filter and domain and domain != LegalDomain.UNKNOWN:
-            where_clause = {"legal_domain": domain.value}
-            if document_type:
-                where_clause["document_type"] = document_type
-            search_kwargs["filter"] = where_clause
+        if (
+            ENABLE_DOMAIN_FILTERED_RETRIEVAL
+            and taxonomy_domain
+            and taxonomy_domain != "نامشخص"
+        ):
+            if taxonomy_subdomain:
+                search_kwargs["filter"] = {
+                    "$and": [
+                        {"domain": taxonomy_domain},
+                        {"subdomain": taxonomy_subdomain},
+                    ]
+                }
+            else:
+                search_kwargs["filter"] = {"domain": taxonomy_domain}
         elif document_type:
-            where_clause = {"document_type": document_type}
-            search_kwargs["filter"] = where_clause
+            search_kwargs["filter"] = {"document_type": document_type}
 
         docs = self._safe_invoke(query_text, search_kwargs)
 
-        # Corpus is largely tagged legal_domain=unknown — domain filters often
-        # return zero chunks. Always fall back so grounding still works.
+        if (
+            (not docs or len(docs) < max(1, k // 2))
+            and taxonomy_domain
+            and taxonomy_subdomain
+            and ENABLE_DOMAIN_FILTERED_RETRIEVAL
+        ):
+            logger.info(
+                "Subdomain filter weak (got %s); falling back to domain=%s",
+                len(docs) if docs else 0,
+                taxonomy_domain,
+            )
+            docs = self._safe_invoke(
+                query_text, {"k": k, "filter": {"domain": taxonomy_domain}}
+            )
+
         if not docs and search_kwargs.get("filter"):
             logger.info(
-                "Domain/type filter returned 0 docs (filter=%s); falling back to unfiltered retrieve",
+                "Domain/type filter returned 0 docs (filter=%s); unfiltered fallback",
                 search_kwargs.get("filter"),
             )
-            fallback_kwargs: Dict[str, Any] = {"k": k}
-            docs = self._safe_invoke(query_text, fallback_kwargs)
+            docs = self._safe_invoke(query_text, {"k": k})
 
         return docs
 
     def _safe_invoke(self, query_text: str, search_kwargs: Dict[str, Any]) -> List[Document]:
         try:
             retriever = self.vectorstore.as_retriever(search_kwargs=search_kwargs)
-            docs = retriever.invoke(query_text)
-            return list(docs or [])
+            return list(retriever.invoke(query_text) or [])
         except Exception as e:
             logger.warning(
-                "Chroma retriever.invoke failed (filter=%s): %s — trying similarity_search",
+                "Chroma retriever.invoke failed (filter=%s): %s",
                 search_kwargs.get("filter"),
                 e,
             )
@@ -98,9 +113,7 @@ class EnhancedRetriever:
                 filt = search_kwargs.get("filter")
                 if filt:
                     return list(
-                        self.vectorstore.similarity_search(
-                            query_text, k=k, filter=filt
-                        )
+                        self.vectorstore.similarity_search(query_text, k=k, filter=filt)
                         or []
                     )
                 return list(self.vectorstore.similarity_search(query_text, k=k) or [])
@@ -111,15 +124,21 @@ class EnhancedRetriever:
     def retrieve_with_classification(
         self, question: str, k: int = 5
     ) -> tuple[List[Document], LegalDomain, float]:
-        """Retrieve documents after classifying the question.
+        """Classify once via taxonomy, then retrieve."""
+        from app.services.taxonomy import classify_confident
 
-        Returns:
-            Tuple of (documents, detected_domain, confidence)
-        """
-        domain, confidence = classify_question(question)
-        apply_domain = domain
-        if confidence < self.domain_filter_min_confidence:
-            # Low-confidence labels must not hard-filter the corpus.
-            apply_domain = LegalDomain.UNKNOWN
-        docs = self.retrieve(question, k=k, domain=apply_domain)
+        tax = classify_confident(question)
+        tax_domain = tax.get("domain") if tax.get("confident") else None
+        tax_sub = tax.get("subdomain") if tax.get("confident") else None
+        domain = taxonomy_to_legacy(tax.get("domain"))
+        confidence = float(tax.get("confidence") or 0.0)
+        if domain == LegalDomain.UNKNOWN:
+            confidence = 0.0
+
+        docs = self.retrieve(
+            question,
+            k=k,
+            taxonomy_domain=tax_domain,
+            taxonomy_subdomain=tax_sub,
+        )
         return docs, domain, confidence

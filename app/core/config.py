@@ -92,6 +92,24 @@ MAX_CHAT_HISTORY_MESSAGES = int(os.getenv("MAX_CHAT_HISTORY_MESSAGES", "8"))
 # Reranker (CrossEncoder is CPU-heavy; disable via env for lower latency)
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+# Drop chunks below this CrossEncoder / relevance score before generate
+MIN_SOURCE_RELEVANCE_SCORE = float(os.getenv("MIN_SOURCE_RELEVANCE_SCORE", "0.5"))
+
+# Hierarchical taxonomy classify → Chroma metadata filter
+ENABLE_DOMAIN_FILTERED_RETRIEVAL = (
+    os.getenv("ENABLE_DOMAIN_FILTERED_RETRIEVAL", "true").lower() == "true"
+)
+TAXONOMY_CLASSIFY_MIN_CONFIDENCE = float(
+    os.getenv("TAXONOMY_CLASSIFY_MIN_CONFIDENCE", "0.6")
+)
+# Use gpt-4o-mini for query classify (falls back to heuristic if no API key)
+TAXONOMY_LLM_CLASSIFY = (
+    os.getenv("TAXONOMY_LLM_CLASSIFY", "true").lower() == "true"
+)
+# Optional LLM tagging during ingestion (expensive; default off → heuristic only)
+USE_LLM_TAXONOMY_TAGGING = (
+    os.getenv("USE_LLM_TAXONOMY_TAGGING", "false").lower() == "true"
+)
 
 # Auth
 SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret")

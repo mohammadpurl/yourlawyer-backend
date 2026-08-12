@@ -73,14 +73,19 @@ def _build_chunk_metadata(
     unit_kind: str | None = None,
     unit_title: str | None = None,
     unit_index: int | None = None,
+    domain: str | None = None,
+    subdomain: str | None = None,
 ) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {
         "source": source,
         "document_type": document_type,
         "legal_domain": legal_domain,
+        "domain": domain or "نامشخص",
         "content_hash": _content_hash(content),
         **parse_source_metadata(source),
     }
+    if subdomain:
+        metadata["subdomain"] = subdomain
     if unit_kind is not None:
         metadata["unit_kind"] = unit_kind
     if unit_title is not None:
@@ -91,6 +96,51 @@ def _build_chunk_metadata(
     if unit_index is not None:
         metadata["unit_index"] = unit_index
     return metadata
+
+
+def _tag_taxonomy(source: str, text: str) -> Dict[str, Any]:
+    """Attach hierarchical taxonomy labels (heuristic; optional LLM)."""
+    from app.core.config import USE_LLM_TAXONOMY_TAGGING, OPENAI_API_KEY
+    from app.services.taxonomy import heuristic_tag_text, taxonomy_prompt_text
+
+    tag = heuristic_tag_text(source, text)
+    if (
+        USE_LLM_TAXONOMY_TAGGING
+        and OPENAI_API_KEY
+        and (tag.get("domain") == "نامشخص" or float(tag.get("confidence") or 0) < 0.55)
+    ):
+        try:
+            from langchain_openai import ChatOpenAI
+            from langchain_core.messages import SystemMessage, HumanMessage
+            import json as _json
+
+            snippet = (text or "")[:1800]
+            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+            resp = llm.invoke(
+                [
+                    SystemMessage(
+                        content=(
+                            "متن قانونی زیر را بر اساس این taxonomy طبقه‌بندی کن و فقط JSON "
+                            'خروجی بده بدون هیچ توضیح اضافه: {"domain": "...", "subdomain": "..."}\n'
+                            f"Taxonomy:\n{taxonomy_prompt_text()}"
+                        )
+                    ),
+                    HumanMessage(content=f"منبع: {source}\nمتن:\n{snippet}"),
+                ]
+            )
+            raw = getattr(resp, "content", "") or ""
+            m = re.search(r"\{.*\}", raw, re.DOTALL)
+            if m:
+                parsed = _json.loads(m.group(0))
+                tag = {
+                    "domain": parsed.get("domain") or "نامشخص",
+                    "subdomain": parsed.get("subdomain"),
+                    "confidence": 0.75,
+                    "method": "llm",
+                }
+        except Exception:
+            pass
+    return tag
 
 
 def _make_document(content: str, metadata: Dict[str, Any]) -> Document:
@@ -211,6 +261,9 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
     """Chunk legal documents with enhanced metadata."""
     document_type = _detect_document_type(source, text)
     legal_domain = _detect_legal_domain(text)
+    tax = _tag_taxonomy(source, text)
+    domain = tax.get("domain") or "نامشخص"
+    subdomain = tax.get("subdomain")
 
     units = _find_legal_units(text)
     documents: List[Document] = []
@@ -230,6 +283,8 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
                         unit_kind=kind,
                         unit_title=title,
                         unit_index=idx,
+                        domain=domain,
+                        subdomain=subdomain,
                     ),
                 )
             )
@@ -257,6 +312,8 @@ def _legal_chunk_documents(text: str, source: str) -> List[Document]:
                     legal_domain,
                     content,
                     unit_index=doc.metadata.get("start_index"),
+                    domain=domain,
+                    subdomain=subdomain,
                 ),
             )
         )

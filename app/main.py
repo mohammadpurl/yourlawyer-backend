@@ -146,6 +146,9 @@ app = FastAPI(
     redoc_url="/redoc" if DOCS_ENABLED else None,
     openapi_url="/openapi.json" if DOCS_ENABLED else None,
     lifespan=lifespan,
+    # Avoid 307 redirects on /conversations ↔ /conversations/ which break
+    # some frontend clients (POST body / follow-up /ask never sent).
+    redirect_slashes=False,
 )
 
 

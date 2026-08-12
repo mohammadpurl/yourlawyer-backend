@@ -1,94 +1,19 @@
-"""Legal question type classifier for Persian legal queries."""
+"""Thin compatibility layer over ``app.services.taxonomy``.
+
+Do not add a second keyword taxonomy here — LEGAL_TAXONOMY is the only source
+of truth. This module only maps taxonomy domains to the legacy LegalDomain
+enum used by older response fields / tests.
+"""
 
 from __future__ import annotations
 
-import re
 from enum import Enum
-from typing import Optional
 
-# Legal domain categories
-LEGAL_DOMAINS = {
-    "criminal": {
-        "keywords": [
-            "جرم",
-            "مجازات",
-            "زندان",
-            "حبس",
-            "جزا",
-            "کیفر",
-            "دعوای کیفری",
-            "دادگاه کیفری",
-            "دادستان",
-            "شکایت کیفری",
-            "قتل",
-            "سرقت",
-            "کلاهبرداری",
-            "خیانت",
-            "توهین",
-            "ضرب و جرح",
-        ],
-        "label": "کیفری",
-    },
-    "civil": {
-        "keywords": [
-            "حقوق مدنی",
-            "عقد",
-            "قرارداد",
-            "خرید و فروش",
-            "اجاره",
-            "ملک",
-            "ارث",
-            "وصیت",
-            "ضمان",
-            "کفالت",
-            "رهن",
-            "عقد نکاح",
-            "طلاق",
-            "نفقه",
-            "مهریه",
-        ],
-        "label": "مدنی",
-    },
-    "family": {
-        "keywords": [
-            "خانواده",
-            "ازدواج",
-            "طلاق",
-            "نفقه",
-            "مهریه",
-            "حضانت",
-            "ولایت",
-            "نسب",
-            "عقد نکاح",
-            "صیغه",
-            "عده",
-            "نشوز",
-            "شیربها",
-        ],
-        "label": "خانواده",
-    },
-    "commercial": {
-        "keywords": [
-            "تجاری",
-            "شرکت",
-            "سهامی",
-            "با مسئولیت محدود",
-            "سفته",
-            "برات",
-            "چک",
-            "اسناد تجاری",
-            "ورشکستگی",
-            "تجارت",
-            "بازرگانی",
-            "قرارداد تجاری",
-        ],
-        "label": "تجاری",
-    },
-}
+from app.services.taxonomy import classify_confident, classify_query
 
 
 class LegalDomain(str, Enum):
-    """Legal domain categories."""
+    """Legacy flat domains (mapped from hierarchical taxonomy)."""
 
     CRIMINAL = "criminal"
     CIVIL = "civil"
@@ -97,57 +22,61 @@ class LegalDomain(str, Enum):
     UNKNOWN = "unknown"
 
 
+# Persian taxonomy domain → legacy enum
+_TAXONOMY_TO_LEGACY: dict[str, LegalDomain] = {
+    "کیفری": LegalDomain.CRIMINAL,
+    "مدنی": LegalDomain.CIVIL,
+    "خانواده": LegalDomain.FAMILY,
+    "تجاری_و_اسناد_تجاری": LegalDomain.COMMERCIAL,
+    "اداری": LegalDomain.CIVIL,
+    "کار_و_تامین_اجتماعی": LegalDomain.CIVIL,
+}
+
+_LEGACY_LABELS: dict[LegalDomain, str] = {
+    LegalDomain.CRIMINAL: "کیفری",
+    LegalDomain.CIVIL: "مدنی",
+    LegalDomain.FAMILY: "خانواده",
+    LegalDomain.COMMERCIAL: "تجاری",
+    LegalDomain.UNKNOWN: "عمومی",
+}
+
+
+def taxonomy_to_legacy(domain: str | None) -> LegalDomain:
+    if not domain:
+        return LegalDomain.UNKNOWN
+    return _TAXONOMY_TO_LEGACY.get(domain, LegalDomain.UNKNOWN)
+
+
 def classify_question(question: str) -> tuple[LegalDomain, float]:
-    """Classify a Persian legal question into a legal domain.
-
-    Returns:
-        Tuple of (domain, confidence_score)
-    """
-    # Check cache first
-    try:
-        from app.core.cache import get_cached_classification, cache_classification
-
-        cached = get_cached_classification(question)
-        if cached:
-            domain = LegalDomain(cached["domain"])
-            return domain, cached["confidence"]
-    except Exception:
-        pass  # Fall through to normal classification
-
-    question_lower = question.lower()
-    scores: dict[LegalDomain, float] = {}
-
-    for domain_key, domain_info in LEGAL_DOMAINS.items():
-        domain = LegalDomain(domain_key)
-        score = 0.0
-        keywords = domain_info["keywords"]
-
-        for keyword in keywords:
-            if keyword in question_lower:
-                score += 1.0
-
-        if score > 0:
-            scores[domain] = score / len(keywords)
-
-    if not scores:
-        result = (LegalDomain.UNKNOWN, 0.0)
-    else:
-        best_domain = max(scores.items(), key=lambda x: x[1])
-        result = (best_domain[0], best_domain[1])
-
-    # Cache the result
-    try:
-        from app.core.cache import cache_classification
-
-        cache_classification(question, result[0].value, result[1], ttl=3600)
-    except Exception:
-        pass  # Cache failure shouldn't break classification
-
-    return result
-
-
-def get_domain_label(domain: LegalDomain) -> str:
-    """Get Persian label for a legal domain."""
+    """Classify via taxonomy; return legacy (LegalDomain, confidence)."""
+    result = classify_query(question)
+    domain = taxonomy_to_legacy(result.get("domain"))
+    confidence = float(result.get("confidence") or 0.0)
     if domain == LegalDomain.UNKNOWN:
+        confidence = 0.0
+    return domain, confidence
+
+
+def get_domain_label(domain: LegalDomain | str | None) -> str:
+    """Persian label for API responses."""
+    if domain is None:
         return "عمومی"
-    return LEGAL_DOMAINS[domain.value]["label"]
+    if isinstance(domain, str):
+        # Already a taxonomy Persian key, or legacy value
+        if domain in _TAXONOMY_TO_LEGACY:
+            return domain
+        try:
+            domain = LegalDomain(domain)
+        except ValueError:
+            return domain or "عمومی"
+    return _LEGACY_LABELS.get(domain, "عمومی")
+
+
+__all__ = [
+    "LegalDomain",
+    "classify_question",
+    "classify_query",
+    "classify_confident",
+    "get_domain_label",
+    "taxonomy_to_legacy",
+]
