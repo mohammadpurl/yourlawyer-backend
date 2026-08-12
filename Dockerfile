@@ -19,14 +19,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 
-# کپی requirements.txt و نصب dependencies
-# CPU-only torch first — default PyPI torch pulls nvidia_cublas (~GB) and fills the disk
+# CPU-only torch + constraint so sentence-transformers cannot pull CUDA torch from PyPI
+# (that would write libtorch_cuda.so / nvidia_* and fill a small root disk).
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install --index-url https://download.pytorch.org/whl/cpu \
-        "torch>=2.0.0" && \
-    pip install -r requirements.txt && \
-    rm -rf /root/.cache/pip
+    pip install --index-url https://download.pytorch.org/whl/cpu "torch" && \
+    python -c "import torch; open('/tmp/torch-constraint.txt','w').write('torch==%s\n'%torch.__version__)" && \
+    cat /tmp/torch-constraint.txt && \
+    pip install -r requirements.txt -c /tmp/torch-constraint.txt && \
+    rm -rf /root/.cache/pip /tmp/* && \
+    python -c "import torch; print('torch', torch.__version__); assert '+cpu' in torch.__version__ or not torch.cuda.is_available()"
 
 # کپی کد پروژه (storage/ مدل‌ها و کش HF در .dockerignore هستند)
 COPY . .
