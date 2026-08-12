@@ -20,9 +20,13 @@ WORKDIR /app
 RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 
 # کپی requirements.txt و نصب dependencies
+# CPU-only torch first — default PyPI torch pulls nvidia_cublas (~GB) and fills the disk
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install -r requirements.txt
+    pip install --index-url https://download.pytorch.org/whl/cpu \
+        "torch>=2.0.0" && \
+    pip install -r requirements.txt && \
+    rm -rf /root/.cache/pip
 
 # کپی کد پروژه (storage/ مدل‌ها و کش HF در .dockerignore هستند)
 COPY . .
