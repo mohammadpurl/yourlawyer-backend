@@ -49,25 +49,88 @@ PERSIAN_LEGAL_SYSTEM_PROMPT = """
 
 محدودیت‌های اجباری (Citation Grounding):
 - پاسخ را بر اساس متن‌های بخش «منابع بازیابی‌شده» بنویس؛ از دانش عمومی و حافظهٔ خودت درباره قوانین استفاده نکن.
-- اگر بخشی از منابع به سوال مربوط است، همان بخش را توضیح بده و استناد کن — حتی اگر پوشش کامل نباشد.
+- اگر حتی بخشی از منابع به سوال مربوط است (مثلاً ایمنی کار، حفاظت فنی، بیمه کارگران ساختمانی، مسئولیت کارفرما)،
+  حق نداری پاسخ را با جملهٔ کامل امتناع شروع کنی. باید پاسخ جزئی بدهی.
+- ساختار پاسخ جزئی وقتی پوشش کامل نیست (اجباری):
+  1) «آنچه از منابع برمی‌آید»: نکات قابل استناد از همان منابع
+  2) «آنچه در منابع نیست»: صریح بگو چه بخشی از سوال (مثلاً درصد تقصیر، تفکیک مالک و پیمانکار جزء) در منابع نبود
+  3) فهرست منابع فقط موادی که در بخش ۱ واقعاً استفاده کردی
 - فقط وقتی هیچ‌یک از منابع حتی به‌صورت جزئی به موضوع سوال مربوط نیست، بگو:
   «اطلاعات کافی در منابع موجود برای پاسخ دقیق به این سؤال یافت نشد.»
-  و در همان پاسخ کوتاه بگو چه نوع منبعی لازم است (مثلاً قانون مدنی / آیین‌نامه).
+  و کوتاه بگو چه نوع منبعی لازم است. در این حالت فهرست منابع ننویس.
 - هر جا به ماده یا تبصره اشاره می‌کنی، شماره را فقط از متن منبع بیاور، نه از حافظه.
-- هر جمله یا بند باید به ماده‌/تبصرهٔ مشخص از منابع بازیابی‌شده استناد کند؛ هیچ شرط یا مرحله‌ای را که در منابع پشتوانه ندارد — حتی اگر «معمولاً درست» به نظر برسد — ذکر نکن.
+- هیچ شرط یا مرحله‌ای را که در منابع پشتوانه ندارد — حتی اگر «معمولاً درست» به نظر برسد — ذکر نکن.
 - اگر در سوال placeholderهایی مانند [PII_NAME_1] دیدی، آن‌ها را عیناً در پاسخ نگه دار.
+- برای سؤال درباره «درصد تقصیر»: اگر منابع عدد درصد نداده‌اند، درصد اختراع نکن؛ چارچوب تعهدات/ایمنی/بیمه موجود را بگو و نبود درصد را اعلام کن.
 
 جامعیت برای سوالات «شرایط» / «مراحل» / «شرایط و مراحل»:
 - اگر منابع هم شرایط ماهوی و هم مراحل اجرایی را پوشش می‌دهند، پاسخ را در دو بخش جدا با عناوین دقیق «شرایط» و «مراحل اجرایی» بنویس.
-- اگر منابع فقط یکی از این دو را پوشش می‌دهند، همان بخش موجود را با استناد کامل بنویس و صریحاً اعلام کن که برای بخش دیگر (مثلاً تنظیم دادخواست، مراجعه به دادگاه، یا جزئیات شکلی) در منابع بازیابی‌شده اطلاعات کافی نبود — نه سکوت کن و نه از دانش عمومی پر کن.
+- اگر منابع فقط یکی از این دو را پوشش می‌دهند، همان بخش موجود را با استناد کامل بنویس و صریحاً اعلام کن که برای بخش دیگر در منابع بازیابی‌شده اطلاعات کافی نبود — نه سکوت کن و نه از دانش عمومی پر کن.
 
 فرمت پاسخ:
-- ابتدا پاسخ اصلی را خلاصه و واضح ارائه کن (و در صورت نیاز دو بخش «شرایط» و «مراحل اجرایی»)
+- ابتدا پاسخ اصلی (یا دو بخش آنچه برمی‌آید / آنچه نیست)
 - سپس جزئیات و استدلال حقوقی بر اساس منابع
-- در پایان فهرست منابع/مواد ذکرشده در متن منابع بازیابی‌شده را بیاور
+- در پایان فقط فهرست منابع واقعاً استفاده‌شده
+""".strip()
+
+PARTIAL_ANSWER_RETRY_INSTRUCTION = """
+منابع بازیابی‌شده خالی نیستند و به موضوع کارگر/ساختمان/ایمنی/بیمه مرتبط‌اند.
+حق نداری پاسخ را با «اطلاعات کافی در منابع موجود برای پاسخ دقیق به این سؤال یافت نشد» شروع کنی.
+حتماً با دو عنوان بنویس: «آنچه از منابع برمی‌آید» و «آنچه در منابع نیست».
+درصد تقصیر را اگر در منابع نیست ننویس. فهرست منابع فقط برای استنادهای بخش اول.
 """.strip()
 
 NO_CONTEXT_ANSWER = RAG_NO_CONTEXT_MESSAGE
+
+_WORKPLACE_QUERY_CUES = (
+    "کارگر",
+    "ساختمان",
+    "سقوط",
+    "ایمنی",
+    "کارفرما",
+    "حادثه",
+    "حفاظت",
+    "پیمانکار",
+    "مالک",
+    "ارتفاع",
+)
+
+_WORKPLACE_EXTRA_QUERIES = (
+    "مسئولیت کارفرما ایمنی کارگاه حفاظت فنی قانون کار",
+    "آیین نامه حفاظت فنی وسایل ایمنی ساختمان سقوط از ارتفاع",
+    "بیمه اجباری کارگران ساختمانی تعهدات کارفرما",
+)
+
+
+def _is_full_refuse_answer(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return False
+    marker = (RAG_NO_CONTEXT_MESSAGE or "").strip()
+    if marker and marker in t[:180]:
+        return True
+    return t.startswith("اطلاعات کافی در منابع موجود")
+
+
+def _needs_workplace_expansion(question: str) -> bool:
+    q = (question or "").replace("\u200c", " ")
+    hits = sum(1 for c in _WORKPLACE_QUERY_CUES if c in q)
+    return hits >= 2
+
+
+def _dedupe_docs(docs: list) -> list:
+    seen: set[str] = set()
+    out = []
+    for doc in docs:
+        meta = getattr(doc, "metadata", None) or {}
+        key = str(meta.get("content_hash") or "") or (
+            (getattr(doc, "page_content", "") or "")[:240]
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(doc)
+    return out
 
 
 def rag_error_payload(message: str, status_code: int = 400) -> Dict[str, Any]:
@@ -359,6 +422,24 @@ def build_rag_chain(
                 taxonomy_domain=tax_domain if ENABLE_DOMAIN_FILTERED_RETRIEVAL else None,
                 taxonomy_subdomain=tax_sub if ENABLE_DOMAIN_FILTERED_RETRIEVAL else None,
             )
+            # Workplace-accident questions: pull safety / employer-duty chunks too
+            if _needs_workplace_expansion(question):
+                expanded: list = list(docs or [])
+                for extra_q in _WORKPLACE_EXTRA_QUERIES:
+                    extra_docs = enh_retriever.retrieve(
+                        extra_q,
+                        k=max(4, retrieve_k // 2),
+                        taxonomy_domain=(
+                            tax_domain if ENABLE_DOMAIN_FILTERED_RETRIEVAL else None
+                        ),
+                        taxonomy_subdomain=(
+                            tax_sub if ENABLE_DOMAIN_FILTERED_RETRIEVAL else None
+                        ),
+                    )
+                    expanded.extend(extra_docs or [])
+                docs = _dedupe_docs(expanded)
+                if timer:
+                    timer.set_meta(workplace_query_expansion=True)
             if timer:
                 timer.mark("retrieve")
         elif std_retriever:
@@ -449,7 +530,15 @@ def build_rag_chain(
             cached_result = get_cached_rag_result(
                 anon_question, k, use_enhanced_retrieval
             )
-            if cached_result:
+            cached_answer = (
+                cached_result.get("answer")
+                if isinstance(cached_result, dict)
+                else None
+            )
+            skip_refuse_cache = isinstance(cached_answer, str) and _is_full_refuse_answer(
+                cached_answer
+            )
+            if cached_result and not skip_refuse_cache:
                 timer.mark("cache_lookup")
                 timer.set_meta(cache_hit=True)
                 logger.info(
@@ -461,7 +550,7 @@ def build_rag_chain(
                     cached["answer"] = anonymizer.restore(cached["answer"], mappings)
                 return cached
             timer.mark("cache_lookup")
-            timer.set_meta(cache_hit=False)
+            timer.set_meta(cache_hit=False, cache_skipped_refuse=skip_refuse_cache)
 
             inputs = {"question": anon_question}
             prepared = _prepare_inputs(
@@ -544,6 +633,41 @@ def build_rag_chain(
                 ollama_chain = prompt | llm | StrOutputParser()
                 result_text = ollama_chain.invoke(chain_inputs)
 
+            # If model full-refused despite retrieved docs, one forced partial retry
+            if docs and _is_full_refuse_answer(result_text):
+                logger.warning(
+                    "Partial-answer retry | request_id=%s | retrieved=%s",
+                    timer.request_id,
+                    len(docs),
+                )
+                timer.set_meta(partial_answer_retry=True)
+                retry_messages = list(messages) + [
+                    HumanMessage(content=PARTIAL_ANSWER_RETRY_INSTRUCTION)
+                ]
+                if use_openai:
+                    if user is not None and db is not None:
+                        try:
+                            result_text = call_llm_with_quota_check(
+                                messages=retry_messages,
+                                user=user,
+                                db=db,
+                                model=DEFAULT_LLM_MODEL,
+                                pipeline_stage="generate_partial_retry",
+                                max_completion_tokens=LLM_MAX_COMPLETION_TOKENS,
+                                request_id=timer.request_id,
+                                usage_out=usage_out,
+                            )
+                        except (HTTPException, QuotaExceeded):
+                            pass
+                else:
+                    retry_inputs = dict(chain_inputs)
+                    retry_inputs["question"] = (
+                        f"{anon_question}\n\n{PARTIAL_ANSWER_RETRY_INSTRUCTION}"
+                    )
+                    result_text = (prompt | llm | StrOutputParser()).invoke(
+                        retry_inputs
+                    )
+
             timer.mark("generate")
             if usage_out:
                 timer.set_meta(
@@ -553,6 +677,9 @@ def build_rag_chain(
                 )
 
             sources = _extract_citations(result_text, docs)
+            # Don't show contradictory source list under a full refuse
+            if _is_full_refuse_answer(result_text):
+                sources = []
             elapsed = time.time() - start_time
 
             chunk_texts = [getattr(d, "page_content", "") or "" for d in docs]
