@@ -3,6 +3,8 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
+from app.schemas.rag import ExpertOpinionRequired
+
 
 class MessageResponse(BaseModel):
     id: int
@@ -52,3 +54,4 @@ class ChatResponse(BaseModel):
     domain: Optional[str] = None
     domain_label: Optional[str] = None
     domain_confidence: Optional[float] = None
+    expert_opinion_required: Optional[ExpertOpinionRequired] = None

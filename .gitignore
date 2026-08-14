@@ -23,12 +23,10 @@ wheels/
 .installed.cfg
 *.egg
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.hypothesis/
+# Eval run artifacts (keep jsonl seed in git; ignore generated reports)
+eval/results/*.json
+!eval/results/.gitkeep
+
 
 # Cypress
 cypress/videos/

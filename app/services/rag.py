@@ -42,6 +42,11 @@ from app.services.citation_validator import (
 from app.services.citation_quality import persist_citation_quality_log
 from app.services.response_warnings import prepend_strong_warning
 from fastapi import HTTPException
+from app.config.expert_opinion_domains import (
+    detect_expert_opinion_domain,
+    expert_opinion_api_payload,
+    expert_opinion_prompt_addon,
+)
 
 
 PERSIAN_LEGAL_SYSTEM_PROMPT = """
@@ -160,6 +165,7 @@ def _no_context_response(
     mappings,
     domain=None,
     confidence: float = 0.0,
+    expert_opinion_required: dict | None = None,
 ) -> Dict[str, Any]:
     elapsed = time.time() - start_time
     answer = anonymizer.restore(NO_CONTEXT_ANSWER, mappings)
@@ -179,6 +185,8 @@ def _no_context_response(
         payload["domain"] = domain.value if hasattr(domain, "value") else domain
         payload["domain_label"] = get_domain_label(domain) if hasattr(domain, "value") else None
         payload["domain_confidence"] = round(confidence, 2)
+    if expert_opinion_required:
+        payload["expert_opinion_required"] = expert_opinion_required
     return payload
 
 
@@ -523,6 +531,15 @@ def build_rag_chain(
 
         start_time = time.time()
         try:
+            # Parallel to taxonomy classify: keyword detect expert-opinion domains
+            expert_domain = detect_expert_opinion_domain(question)
+            expert_payload = expert_opinion_api_payload(expert_domain)
+            if expert_domain:
+                timer.set_meta(
+                    expert_opinion_domain=expert_domain.get("id"),
+                    expert_opinion_required=True,
+                )
+
             anonymizer = get_pii_anonymizer()
             anon_question, mappings = anonymizer.anonymize(question)
             timer.mark("anonymize")
@@ -548,6 +565,8 @@ def build_rag_chain(
                 cached = dict(cached_result)
                 if isinstance(cached.get("answer"), str):
                     cached["answer"] = anonymizer.restore(cached["answer"], mappings)
+                if expert_payload:
+                    cached["expert_opinion_required"] = expert_payload
                 return cached
             timer.mark("cache_lookup")
             timer.set_meta(cache_hit=False, cache_skipped_refuse=skip_refuse_cache)
@@ -589,6 +608,7 @@ def build_rag_chain(
                     mappings=mappings,
                     domain=domain,
                     confidence=confidence,
+                    expert_opinion_required=expert_payload,
                 )
 
             chain_inputs: Dict[str, Any] = {
@@ -603,8 +623,39 @@ def build_rag_chain(
                 mappings = list(mappings) + list(history_maps)
                 chain_inputs["chat_history"] = anon_history
 
+            # System prompt: base + optional expert-opinion guidance
+            system_text = PERSIAN_LEGAL_SYSTEM_PROMPT
+            if expert_domain:
+                system_text = (
+                    f"{PERSIAN_LEGAL_SYSTEM_PROMPT}\n\n"
+                    f"{expert_opinion_prompt_addon(expert_domain)}"
+                )
+            if memory:
+                gen_prompt = ChatPromptTemplate.from_messages(
+                    [
+                        ("system", system_text),
+                        MessagesPlaceholder(variable_name="chat_history"),
+                        (
+                            "human",
+                            "سوال: {question}\n\nمنابع بازیابی‌شده:\n{context}\n\n"
+                            "پاسخ دقیق و مستند:",
+                        ),
+                    ]
+                )
+            else:
+                gen_prompt = ChatPromptTemplate.from_messages(
+                    [
+                        ("system", system_text),
+                        (
+                            "human",
+                            "سوال: {question}\n\nمنابع بازیابی‌شده:\n{context}\n\n"
+                            "پاسخ دقیق و مستند:",
+                        ),
+                    ]
+                )
+
             # Format prompt → messages, then billable generate via quota wrapper
-            messages = prompt.format_messages(**chain_inputs)
+            messages = gen_prompt.format_messages(**chain_inputs)
             usage_out: Dict[str, Any] = {}
 
             if use_openai:
@@ -630,7 +681,7 @@ def build_rag_chain(
                 except QuotaExceeded as e:
                     return rag_error_payload(e.message, e.status_code)
             else:
-                ollama_chain = prompt | llm | StrOutputParser()
+                ollama_chain = gen_prompt | llm | StrOutputParser()
                 result_text = ollama_chain.invoke(chain_inputs)
 
             # If model full-refused despite retrieved docs, one forced partial retry
@@ -664,7 +715,7 @@ def build_rag_chain(
                     retry_inputs["question"] = (
                         f"{anon_question}\n\n{PARTIAL_ANSWER_RETRY_INSTRUCTION}"
                     )
-                    result_text = (prompt | llm | StrOutputParser()).invoke(
+                    result_text = (gen_prompt | llm | StrOutputParser()).invoke(
                         retry_inputs
                     )
 
@@ -718,6 +769,8 @@ def build_rag_chain(
                 "grounded": True,
                 "no_context": False,
             }
+            if expert_payload:
+                cached_payload["expert_opinion_required"] = expert_payload
 
             if use_enhanced_retrieval:
                 domain = prepared.get("detected_domain")

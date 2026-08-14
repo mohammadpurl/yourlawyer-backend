@@ -205,7 +205,11 @@ def ask_in_conversation(
         response_time_seconds=result.get("response_time_seconds"),  # type: ignore[union-attr] # noqa: E501
         citation_count=result.get("citation_count"),  # type: ignore[union-attr] # noqa: E501
         citation_accuracy=result.get("citation_accuracy"),  # type: ignore[union-attr] # noqa: E501
+        citation_confidence=result.get("citation_confidence"),  # type: ignore[union-attr]
+        cited_articles=result.get("cited_articles") or [],  # type: ignore[union-attr]
+        unverified_citations=result.get("unverified_citations") or [],  # type: ignore[union-attr]
         domain=result.get("domain"),  # type: ignore[union-attr] # noqa: E501
         domain_label=result.get("domain_label"),  # type: ignore[union-attr] # noqa: E501
         domain_confidence=result.get("domain_confidence"),  # type: ignore[union-attr] # noqa: E501
+        expert_opinion_required=result.get("expert_opinion_required"),  # type: ignore[union-attr]
     )

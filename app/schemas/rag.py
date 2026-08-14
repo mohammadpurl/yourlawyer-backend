@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class FolderPathRequest(BaseModel):
@@ -20,6 +21,16 @@ class AskRequest(BaseModel):
     )
 
 
+class ExpertOpinionRequired(BaseModel):
+    """Separate from citation confidence — law defers quantum to an expert."""
+
+    flag: bool = True
+    expert_type: Optional[str] = None
+    domain_label: Optional[str] = None
+    domain_id: Optional[str] = None
+    guidance_factors_hint: Optional[str] = None
+
+
 class AskResponse(BaseModel):
     answer: str
     sources: List[str] = []
@@ -36,6 +47,7 @@ class AskResponse(BaseModel):
     domain: Optional[str] = None
     domain_label: Optional[str] = None
     domain_confidence: Optional[float] = None
+    expert_opinion_required: Optional[ExpertOpinionRequired] = None
 
 
 class SourceInfo(BaseModel):

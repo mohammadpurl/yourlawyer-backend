@@ -514,9 +514,13 @@ async def ask(
                     "response_time_seconds",
                     "citation_count",
                     "citation_accuracy",
+                    "citation_confidence",
+                    "cited_articles",
+                    "unverified_citations",
                     "domain",
                     "domain_label",
                     "domain_confidence",
+                    "expert_opinion_required",
                 ]:
                     if key in result:
                         minimal_result[key] = result[key]
