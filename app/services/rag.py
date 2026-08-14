@@ -481,12 +481,18 @@ def build_rag_chain(
             if RAG_REQUIRE_RETRIEVED_CONTEXT and not _has_usable_context(docs, context):
                 domain = prepared.get("detected_domain")
                 confidence = prepared.get("domain_confidence", 0.0) or 0.0
-                timer.set_meta(no_context=True)
+                retrieved_n = timer.meta.get("retrieved_count", 0)
+                kept_n = timer.meta.get("reranked_count", len(docs) if docs else 0)
+                timer.set_meta(no_context=True, kept_count=kept_n)
                 logger.warning(
-                    "RAG no-context gate | request_id=%s | retrieved=%s | domain=%s",
+                    "RAG no-context gate | request_id=%s | retrieved=%s | kept=%s | "
+                    "domain=%s | taxonomy=%s/%s",
                     timer.request_id,
-                    len(docs) if docs else 0,
+                    retrieved_n,
+                    kept_n,
                     getattr(domain, "value", domain),
+                    timer.meta.get("taxonomy_domain"),
+                    timer.meta.get("taxonomy_subdomain"),
                 )
                 return _no_context_response(
                     start_time=start_time,

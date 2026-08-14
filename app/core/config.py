@@ -92,12 +92,14 @@ MAX_CHAT_HISTORY_MESSAGES = int(os.getenv("MAX_CHAT_HISTORY_MESSAGES", "8"))
 # Reranker (CrossEncoder is CPU-heavy; disable via env for lower latency)
 RERANKER_ENABLED = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-# Drop chunks below this CrossEncoder / relevance score before generate
-MIN_SOURCE_RELEVANCE_SCORE = float(os.getenv("MIN_SOURCE_RELEVANCE_SCORE", "0.5"))
+# Drop chunks below this CrossEncoder / relevance score before generate.
+# Default 0.25: English MiniLM on Persian often scores <0.5 and emptied context.
+MIN_SOURCE_RELEVANCE_SCORE = float(os.getenv("MIN_SOURCE_RELEVANCE_SCORE", "0.25"))
 
-# Hierarchical taxonomy classify → Chroma metadata filter
+# Hierarchical taxonomy classify → Chroma metadata filter.
+# Default off until corpus is re-tagged with domain/subdomain metadata.
 ENABLE_DOMAIN_FILTERED_RETRIEVAL = (
-    os.getenv("ENABLE_DOMAIN_FILTERED_RETRIEVAL", "true").lower() == "true"
+    os.getenv("ENABLE_DOMAIN_FILTERED_RETRIEVAL", "false").lower() == "true"
 )
 TAXONOMY_CLASSIFY_MIN_CONFIDENCE = float(
     os.getenv("TAXONOMY_CLASSIFY_MIN_CONFIDENCE", "0.6")

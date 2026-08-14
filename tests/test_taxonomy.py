@@ -72,6 +72,26 @@ def test_classify_query_heuristic_check(monkeypatch):
     assert result["confidence"] > 0.5
 
 
+def test_heuristic_workplace_accident_labor():
+    tag = heuristic_tag_text(
+        "آیین نامه حفاظت فنی کارگاه.docx",
+        "حادثه ناشی از کار و وسایل ایمنی کارگر ساختمانی و مسئولیت کارفرما",
+    )
+    assert tag["domain"] == "کار_و_تامین_اجتماعی"
+    assert tag["subdomain"] in {
+        "حوادث_ناشی_از_کار",
+        "ایمنی_و_حفاظت_فنی",
+        "بیمه_مسئولیت_کارفرما",
+        "قرارداد_کار",
+    }
+
+
+def test_labor_subdomains_registered():
+    assert is_valid_subdomain("کار_و_تامین_اجتماعی", "حوادث_ناشی_از_کار")
+    assert is_valid_subdomain("کار_و_تامین_اجتماعی", "ایمنی_و_حفاظت_فنی")
+    assert is_valid_subdomain("کار_و_تامین_اجتماعی", "بیمه_مسئولیت_کارفرما")
+
+
 def test_filter_by_min_score_drops_low():
     docs = [
         Document(page_content="a", metadata={}),

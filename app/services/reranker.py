@@ -124,14 +124,25 @@ def filter_by_min_score(
 ) -> List[Document]:
     """Keep only documents at/above relevance threshold."""
     threshold = MIN_SOURCE_RELEVANCE_SCORE if min_score is None else float(min_score)
-    kept = [doc for doc, score in scored if score >= threshold]
+    kept_pairs = [(doc, score) for doc, score in scored if score >= threshold]
+    kept = [doc for doc, _ in kept_pairs]
     dropped = len(scored) - len(kept)
-    if dropped:
-        logger.info(
-            "Dropped %s/%s chunks below MIN_SOURCE_RELEVANCE_SCORE=%.3f",
-            dropped,
+    top_scores = [round(s, 3) for _, s in scored[:5]]
+    logger.info(
+        "score_filter retrieved=%s kept=%s dropped=%s threshold=%.3f top_scores=%s",
+        len(scored),
+        len(kept),
+        dropped,
+        threshold,
+        top_scores,
+    )
+    if scored and not kept:
+        logger.warning(
+            "score_filter emptied context | retrieved=%s threshold=%.3f "
+            "top_scores=%s (lower MIN_SOURCE_RELEVANCE_SCORE or disable reranker)",
             len(scored),
             threshold,
+            top_scores,
         )
     return kept
 
@@ -156,8 +167,9 @@ def rerank_documents(
         kept = kept[:top_k]
 
     logger.info(
-        "Re-ranked %s documents, returning %s after score filter",
+        "Re-ranked retrieved=%s kept=%s after score filter (top_k=%s)",
         len(documents),
         len(kept),
+        top_k,
     )
     return kept
