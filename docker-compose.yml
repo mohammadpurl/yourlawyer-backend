@@ -90,10 +90,10 @@ services:
     expose:
       - "5000"
     volumes:
-      - ./data:/app/data
-      - ./storage/chroma:/app/storage/chroma
+      - /opt/yourlawyer/yourlawyer-backend/data:/app/data
+      - /opt/yourlawyer/yourlawyer-backend/chroma_storage:/app/storage/chroma
+      - /opt/yourlawyer/yourlawyer-backend/hf_cache:/app/storage/huggingface
       - ./storage/models:/app/storage/models
-      - ./storage/huggingface:/app/storage/huggingface
       - ./storage/avatars:/app/storage/avatars
     networks:
       - app-network
