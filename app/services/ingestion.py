@@ -1,11 +1,21 @@
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import hashlib
+import logging
 import re
+import unicodedata
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 from pypdf import PdfReader
+
+try:
+    import pymupdf  # type: ignore
+
+    _HAS_PYMUPDF = True
+except Exception:
+    pymupdf = None  # type: ignore
+    _HAS_PYMUPDF = False
 
 try:
     from docx import Document as DocxDocument  # type: ignore
@@ -17,9 +27,15 @@ except Exception:
 
 from app.core.config import CHUNK_SIZE, CHUNK_OVERLAP
 
+logger = logging.getLogger(__name__)
+
 E5_PASSAGE_PREFIX = "passage: "
 _DOC_ID_PATTERN = re.compile(r"^(\d+)_(.+)$")
 _ARTICLE_NUMBER_PATTERN = re.compile(r"^[0-9\u06F0-\u06F9]+")
+
+# Bad extracts like Aein-name hard-labor PDF via pypdf: literal "/u0631/u0648..."
+_LITERAL_UNICODE_ESCAPE = re.compile(r"/u[0-9a-fA-F]{4}")
+_PRESENTATION_FORMS = re.compile(r"[\uFB50-\uFDFF\uFE70-\uFEFF]")
 
 
 def _content_hash(text: str) -> str:
@@ -145,9 +161,125 @@ def _make_document(content: str, metadata: Dict[str, Any]) -> Document:
     return Document(page_content=_e5_passage_text(content), metadata=metadata)
 
 
-def _load_pdf(path: Path) -> str:
+def normalize_persian_pdf_text(text: str) -> str:
+    """Collapse Arabic presentation forms / compatibility chars after PDF extract."""
+    if not text:
+        return ""
+    # NFKC: ﻗﺎﻧﻮن → قانون, ي → ي compatibility, etc.
+    t = unicodedata.normalize("NFKC", text)
+    # Common Persian normalization
+    t = t.replace("\u200c", "\u200c")  # keep ZWNJ
+    t = t.replace("ي", "ی").replace("ك", "ک")
+    t = t.replace("\ufeff", "")
+    return t
+
+
+def assess_extracted_text_quality(text: str) -> dict[str, Any]:
+    """Heuristic quality report for PDF/DOC extracts (esp. Persian legal PDFs).
+
+    Reject cases that previously polluted Chroma (scan-empty, pypdf ``/uXXXX``
+    dumps, presentation-form-only garbage without real Persian letters).
+    """
+    raw = text or ""
+    stripped = raw.strip()
+    chars = len(stripped)
+    persian = sum(1 for c in stripped if "\u0600" <= c <= "\u06FF")
+    presentation = len(_PRESENTATION_FORMS.findall(stripped))
+    literal_u = len(_LITERAL_UNICODE_ESCAPE.findall(stripped))
+    ctrl = sum(1 for c in stripped if ord(c) < 32 and c not in "\n\r\t")
+
+    reasons: list[str] = []
+    if chars < 80:
+        reasons.append("empty_or_scan_pdf")
+    if literal_u >= 20 or (chars > 0 and literal_u / max(chars, 1) > 0.02):
+        reasons.append("literal_unicode_escapes")
+    if chars >= 80 and persian < 40:
+        reasons.append("too_few_persian_letters")
+    if presentation > 0 and persian < 40:
+        reasons.append("presentation_forms_unnormalized")
+    if ctrl > 50:
+        reasons.append("binary_control_chars")
+
+    ok = not reasons
+    return {
+        "ok": ok,
+        "chars": chars,
+        "persian_letters": persian,
+        "presentation_forms": presentation,
+        "literal_unicode_escapes": literal_u,
+        "control_chars": ctrl,
+        "reasons": reasons,
+    }
+
+
+def _extract_pdf_pymupdf(path: Path) -> str:
+    doc = pymupdf.open(path.as_posix())  # type: ignore[union-attr]
+    try:
+        return "\n".join(page.get_text() for page in doc)
+    finally:
+        doc.close()
+
+
+def _extract_pdf_pypdf(path: Path) -> str:
     reader = PdfReader(path.as_posix())
     return "\n".join((page.extract_text() or "") for page in reader.pages)
+
+
+def _load_pdf(path: Path) -> str:
+    """Extract PDF text preferring PyMuPDF (better Persian/CMAP) then pypdf.
+
+    Always NFKC-normalizes. Raises ValueError if extract is empty/scan/garbled
+    so callers do not embed junk like the hard-labor آیین‌نامه pypdf dump.
+    """
+    candidates: list[tuple[str, str]] = []
+
+    if _HAS_PYMUPDF:
+        try:
+            candidates.append(("pymupdf", _extract_pdf_pymupdf(path)))
+        except Exception as e:
+            logger.warning("pymupdf extract failed for %s: %s", path.name, e)
+
+    try:
+        candidates.append(("pypdf", _extract_pdf_pypdf(path)))
+    except Exception as e:
+        logger.warning("pypdf extract failed for %s: %s", path.name, e)
+
+    if not candidates:
+        raise ValueError(f"PDF extract failed for {path.name}")
+
+    best_text = ""
+    best_score = -1
+    best_engine = ""
+    best_quality: dict[str, Any] = {}
+
+    for engine, raw in candidates:
+        text = normalize_persian_pdf_text(raw)
+        q = assess_extracted_text_quality(text)
+        # Prefer more Persian letters; penalize literal /u escapes hard
+        score = q["persian_letters"] - 50 * q["literal_unicode_escapes"]
+        if score > best_score:
+            best_score = score
+            best_text = text
+            best_engine = engine
+            best_quality = q
+
+    if not best_quality.get("ok"):
+        reasons = ",".join(best_quality.get("reasons") or ["bad_extract"])
+        raise ValueError(
+            f"PDF text quality rejected for {path.name} "
+            f"(engine={best_engine}, reasons={reasons}, "
+            f"chars={best_quality.get('chars')}, "
+            f"persian={best_quality.get('persian_letters')})"
+        )
+
+    logger.info(
+        "PDF extract ok | file=%s engine=%s chars=%s persian=%s",
+        path.name,
+        best_engine,
+        best_quality.get("chars"),
+        best_quality.get("persian_letters"),
+    )
+    return best_text
 
 
 def _load_docx(path: Path) -> str:
