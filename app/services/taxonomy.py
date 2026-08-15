@@ -11,11 +11,13 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # Living document: extend as rescrape coverage grows.
+# Persian keys are canonical (match Chroma metadata + classify).
+# English slugs (civil / family / labor / criminal / …) are aliases for docs & backfill.
 LEGAL_TAXONOMY: dict[str, dict[str, list[str]]] = {
     "مدنی": {
         "اموال_و_مالکیت": [],
-        "قراردادها_و_تعهدات": [],
-        "مسئولیت_مدنی": ["ضمان قهری", "خسارت"],
+        "قراردادها_و_تعهدات": [],  # civil.contracts
+        "مسئولیت_مدنی": ["ضمان قهری", "خسارت"],  # civil.liability
         "ارث_و_وصیت": [],
         "ثبت_اسناد_و_املاک": [],
     },
@@ -24,6 +26,25 @@ LEGAL_TAXONOMY: dict[str, dict[str, list[str]]] = {
         "مهریه_و_نفقه": [],
         "حضانت_و_ولایت": [],
         "فرزندخواندگی": [],
+    },
+    # labor / حقوق کار — first-class domain (was already present; keep key stable)
+    "کار_و_تامین_اجتماعی": {
+        "قرارداد_کار": [],
+        "بیمه_تامین_اجتماعی": [],
+        "حوادث_ناشی_از_کار": [
+            "حادثه ناشی از کار",
+            "غرامت دستمزد",
+            "ازکارافتادگی",
+        ],
+        "ایمنی_و_حفاظت_فنی": [
+            "حفاظت فنی",
+            "ایمنی کار",
+            "وسایل ایمنی",
+        ],
+        "بیمه_مسئولیت_کارفرما": [
+            "بیمه مسئولیت کارفرما",
+            "بیمه اجباری کارگران ساختمانی",
+        ],
     },
     "کیفری": {
         "جرائم_عمومی": ["سرقت", "کلاهبرداری", "خیانت در امانت"],
@@ -43,27 +64,21 @@ LEGAL_TAXONOMY: dict[str, dict[str, list[str]]] = {
         "استخدام_کشوری": [],
         "دیوان_عدالت_اداری": [],
     },
-    "کار_و_تامین_اجتماعی": {
-        "قرارداد_کار": [],
-        "بیمه_تامین_اجتماعی": [],
-        "حوادث_ناشی_از_کار": [
-            "حادثه ناشی از کار",
-            "غرامت دستمزد",
-            "ازکارافتادگی",
-        ],
-        "ایمنی_و_حفاظت_فنی": [
-            "حفاظت فنی",
-            "ایمنی کار",
-            "وسایل ایمنی",
-        ],
-        "بیمه_مسئولیت_کارفرما": [
-            "بیمه مسئولیت کارفرما",
-            "بیمه اجباری کارگران ساختمانی",
-        ],
-    },
+}
+
+# English slug ↔ Persian domain (for prompts / backfill reports)
+DOMAIN_SLUGS: dict[str, str] = {
+    "civil": "مدنی",
+    "family": "خانواده",
+    "labor": "کار_و_تامین_اجتماعی",
+    "criminal": "کیفری",
+    "commercial": "تجاری_و_اسناد_تجاری",
+    "admin": "اداری",
+    "unclassified": "unclassified",
 }
 
 UNKNOWN_DOMAIN = "نامشخص"
+UNCLASSIFIED_DOMAIN = "unclassified"  # backfill when no law→domain map (not null)
 UNKNOWN_SUBDOMAIN = None
 
 # Heuristic cues for ingest / offline tagging (filename + content).
@@ -116,9 +131,13 @@ DOMAIN_CUES: dict[str, list[str]] = {
     "اداری": ["دیوان عدالت", "استخدام کشوری", "اداری"],
     "کار_و_تامین_اجتماعی": [
         "قانون کار",
+        "حقوق کار",
         "تامین اجتماعی",
+        "تأمين اجتماعي",
         "کارگر",
+        "كارگر",
         "کارفرما",
+        "كارفرما",
         "حادثه ناشی از کار",
         "ایمنی",
         "حفاظت فنی",
@@ -129,6 +148,9 @@ DOMAIN_CUES: dict[str, list[str]] = {
         "دیه کارگر",
         "بیمه مسئولیت",
         "کارگران ساختمانی",
+        "دوره آزمایشی",
+        "قرارداد کار",
+        "بیمه کارگر",
     ],
 }
 

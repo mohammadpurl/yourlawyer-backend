@@ -1,0 +1,16 @@
+{
+  "query": "ضمان قهری در قانون مدنی چیست",
+  "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+  "raw_logits": [
+    9.160265922546387,
+    8.351949691772461
+  ],
+  "score_relevant": 0.9999737190289026,
+  "score_irrelevant": 0.3749410298964002,
+  "delta": 0.6250326891325024,
+  "verdict": "good",
+  "ranks_relevant_first": true,
+  "delta_warn": 0.05,
+  "delta_good": 0.3,
+  "notes": "English ms-marco-MiniLM on Persian often saturates sigmoid≈1.0. Prefer multilingual mmarco / hybrid keyword blend (see reranker.py)."
+}

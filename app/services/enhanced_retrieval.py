@@ -12,6 +12,7 @@ from app.services.vectorstore import get_vectorstore
 from app.core.config import (
     CHROMA_COLLECTION,
     ENABLE_DOMAIN_FILTERED_RETRIEVAL,
+    ENABLE_SUBDOMAIN_FILTERED_RETRIEVAL,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,9 +59,12 @@ class EnhancedRetriever:
         if (
             ENABLE_DOMAIN_FILTERED_RETRIEVAL
             and taxonomy_domain
-            and taxonomy_domain != "نامشخص"
+            and taxonomy_domain not in ("نامشخص", "unclassified", None, "")
         ):
-            if taxonomy_subdomain:
+            if (
+                ENABLE_SUBDOMAIN_FILTERED_RETRIEVAL
+                and taxonomy_subdomain
+            ):
                 search_kwargs["filter"] = {
                     "$and": [
                         {"domain": taxonomy_domain},
@@ -68,6 +72,7 @@ class EnhancedRetriever:
                     ]
                 }
             else:
+                # Domain-only: safer after law-name backfill (many chunks lack subdomain)
                 search_kwargs["filter"] = {"domain": taxonomy_domain}
         elif document_type:
             search_kwargs["filter"] = {"document_type": document_type}
