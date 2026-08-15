@@ -240,4 +240,5 @@ def ask_in_conversation(
         refusal_reason=result.get("refusal_reason"),  # type: ignore[union-attr]
         no_context=result.get("no_context"),  # type: ignore[union-attr]
         grounded=result.get("grounded"),  # type: ignore[union-attr]
+        response_type=result.get("response_type"),  # type: ignore[union-attr]
     )

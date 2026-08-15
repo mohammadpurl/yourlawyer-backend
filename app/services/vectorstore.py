@@ -38,11 +38,49 @@ from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_core.documents import Document
 
-from app.services.ingestion import hash_page_content
-
 logger = logging.getLogger(__name__)
 
 _embeddings_cache: HuggingFaceEmbeddings | None = None
+
+# ---------------------------------------------------------------------------
+# E5 text prefixes (multilingual-e5-base requires these for correct alignment)
+# Documents in Chroma are stored with ``passage:``; search strings must use
+# ``query:``. Keep both helpers here so retrieval/ingest share one definition.
+# ---------------------------------------------------------------------------
+
+
+def prefix_query(text: str) -> str:
+    """Apply the E5 ``query:`` prefix. Idempotent (won't double-prefix)."""
+    t = (text or "").strip()
+    if not t:
+        return t
+    if t.lower().startswith("query:"):
+        # Normalize spacing after the colon
+        rest = t.split(":", 1)[1].lstrip()
+        return f"query: {rest}" if rest else "query:"
+    return f"query: {t}"
+
+
+def prefix_passage(text: str) -> str:
+    """Apply the E5 ``passage:`` prefix. Idempotent (won't double-prefix)."""
+    t = (text or "").strip()
+    if not t:
+        return t
+    if t.lower().startswith("passage:"):
+        rest = t.split(":", 1)[1].lstrip()
+        return f"passage: {rest}" if rest else "passage:"
+    return f"passage: {t}"
+
+
+def strip_e5_prefix(text: str) -> str:
+    """Remove a leading query:/passage: prefix if present."""
+    t = (text or "").strip()
+    low = t.lower()
+    if low.startswith("query:"):
+        return t.split(":", 1)[1].lstrip()
+    if low.startswith("passage:"):
+        return t.split(":", 1)[1].lstrip()
+    return t
 
 
 def _get_chroma_collection(collection_name: str | None = None):
@@ -66,9 +104,9 @@ def _assert_embedding_diversity(embeddings: HuggingFaceEmbeddings) -> None:
     and the LLM correctly refuses to answer.
     """
     samples = [
-        "query: شرایط طلاق توافقی چیست",
-        "query: hello world embedding check",
-        "passage: ماده 1133 قانون مدنی راجع به طلاق",
+        prefix_query("شرایط طلاق توافقی چیست"),
+        prefix_query("hello world embedding check"),
+        prefix_passage("ماده 1133 قانون مدنی راجع به طلاق"),
     ]
     vectors = [embeddings.embed_query(s) for s in samples]
     # Cosine similarity for L2-normalized vectors is the dot product.
@@ -137,6 +175,8 @@ def get_vectorstore(collection_name: str | None = None) -> Chroma:
 
 def get_existing_content_hashes(collection_name: str | None = None) -> Set[str]:
     """Return content hashes for all vectors (metadata or computed from page_content)."""
+    from app.services.ingestion import hash_page_content
+
     try:
         collection = _get_chroma_collection(collection_name)
         if collection is None:
@@ -188,6 +228,8 @@ def _prepare_documents_for_insert(
     documents: List[Document], existing_hashes: Set[str]
 ) -> tuple[List[Document], List[str], int]:
     """Filter duplicates and assign stable IDs based on content_hash."""
+    from app.services.ingestion import hash_page_content
+
     prepared: List[Document] = []
     ids: List[str] = []
     skipped = 0

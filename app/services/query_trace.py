@@ -83,7 +83,11 @@ def infer_outcome(
     no_context: bool,
     llm_full_refuse: bool,
     citation_confidence: str | None,
+    response_type: str | None = None,
 ) -> str:
+    # Level-3 orientation is neither a grounded answer nor a plain refuse
+    if response_type == "general_guidance":
+        return "general_guidance"
     if no_context or llm_full_refuse:
         return "refused"
     if citation_confidence in {"partial", "unverified"}:

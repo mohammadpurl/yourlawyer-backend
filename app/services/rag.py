@@ -8,7 +8,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnableLambda
 from langchain_classic.memory import ConversationBufferMemory
 
-from app.services.vectorstore import get_vectorstore
+from app.services.vectorstore import get_vectorstore, prefix_query
 from app.services.enhanced_retrieval import EnhancedRetriever
 from app.services.question_classifier import get_domain_label
 from app.services.reranker import score_documents, filter_by_min_score
@@ -18,6 +18,11 @@ from app.services.query_trace import (
     _chunk_record,
     infer_outcome,
     infer_refusal_reason,
+)
+from app.services.refusal_guidance import (
+    format_refusal_user_message,
+    generate_general_guidance,
+    should_offer_general_guidance,
 )
 from app.core.config import (
     DEFAULT_TOP_K,
@@ -174,9 +179,43 @@ def _no_context_response(
     domain=None,
     confidence: float = 0.0,
     expert_opinion_required: dict | None = None,
+    refusal_reason: str | None = None,
+    taxonomy_domain: str | None = None,
+    taxonomy_confidence: float | None = None,
+    query: str | None = None,
+    user: Optional[User] = None,
+    db: Optional[Session] = None,
+    request_id: str | None = None,
 ) -> Dict[str, Any]:
+    """Refuse or optional level-3 general_guidance (never invents citations)."""
     elapsed = time.time() - start_time
-    answer = anonymizer.restore(NO_CONTEXT_ANSWER, mappings)
+    tax_domain = taxonomy_domain
+    tax_conf = (
+        float(taxonomy_confidence)
+        if taxonomy_confidence is not None
+        else float(confidence or 0.0)
+    )
+    reason = refusal_reason or "empty_usable_context"
+
+    response_type = "refused"
+    if should_offer_general_guidance(
+        refusal_reason=reason,
+        taxonomy_domain=tax_domain,
+        taxonomy_confidence=tax_conf,
+    ):
+        raw = generate_general_guidance(
+            query=query or "",
+            taxonomy_domain=tax_domain,
+            user=user,
+            db=db,
+            request_id=request_id,
+        )
+        answer = anonymizer.restore(raw, mappings)
+        response_type = "general_guidance"
+    else:
+        msg = format_refusal_user_message(reason, taxonomy_domain=tax_domain)
+        answer = anonymizer.restore(msg, mappings)
+
     payload: Dict[str, Any] = {
         "answer": answer,
         "sources": [],
@@ -188,11 +227,18 @@ def _no_context_response(
         "unverified_citations": [],
         "grounded": False,
         "no_context": True,
+        "response_type": response_type,
+        "refusal_reason": reason,
     }
     if domain is not None:
         payload["domain"] = domain.value if hasattr(domain, "value") else domain
-        payload["domain_label"] = get_domain_label(domain) if hasattr(domain, "value") else None
+        payload["domain_label"] = (
+            get_domain_label(domain) if hasattr(domain, "value") else None
+        )
         payload["domain_confidence"] = round(confidence, 2)
+    elif tax_domain:
+        payload["domain"] = tax_domain
+        payload["domain_confidence"] = round(tax_conf, 2)
     if expert_opinion_required:
         payload["expert_opinion_required"] = expert_opinion_required
     return payload
@@ -359,12 +405,12 @@ def build_rag_chain(
                     enhanced_retriever.retrieve_with_classification(anon_question, k=k)
                 )
             elif retriever:
-                docs = retriever.invoke("query: " + anon_question)
+                docs = retriever.invoke(prefix_query(anon_question))
                 domain, confidence = None, 0.0
             else:
                 vs = get_vectorstore()
                 basic_retriever = vs.as_retriever(search_kwargs={"k": k})
-                docs = basic_retriever.invoke("query: " + anon_question)
+                docs = basic_retriever.invoke(prefix_query(anon_question))
                 domain, confidence = None, 0.0
 
             context = "\n\n".join(d.page_content for d in docs)
@@ -375,6 +421,10 @@ def build_rag_chain(
                     mappings=mappings,
                     domain=domain,
                     confidence=confidence or 0.0,
+                    refusal_reason="no_chunks_retrieved",
+                    query=anon_question,
+                    user=user,
+                    db=db,
                 )
             sources = _extract_citations(context, docs)
             answer = (
@@ -461,7 +511,7 @@ def build_rag_chain(
         elif std_retriever:
             if timer:
                 timer.mark("classify")
-            docs = std_retriever.invoke("query: " + question)
+            docs = std_retriever.invoke(prefix_query(question))
             domain, confidence = None, 0.0
             if timer:
                 timer.mark("retrieve")
@@ -470,7 +520,7 @@ def build_rag_chain(
                 timer.mark("classify")
             vs = get_vectorstore()
             basic_retriever = vs.as_retriever(search_kwargs={"k": retrieve_k})
-            docs = basic_retriever.invoke("query: " + question)
+            docs = basic_retriever.invoke(prefix_query(question))
             domain, confidence = None, 0.0
             if timer:
                 timer.mark("retrieve")
@@ -639,6 +689,12 @@ def build_rag_chain(
                     timer.meta.get("taxonomy_domain"),
                     timer.meta.get("taxonomy_subdomain"),
                 )
+                refusal = infer_refusal_reason(
+                    retrieved_count=int(retrieved_n or 0),
+                    kept_count=int(kept_n or 0),
+                    no_context=True,
+                    answer=None,
+                )
                 return_payload = _no_context_response(
                     start_time=start_time,
                     anonymizer=anonymizer,
@@ -646,14 +702,15 @@ def build_rag_chain(
                     domain=domain,
                     confidence=confidence,
                     expert_opinion_required=expert_payload,
+                    refusal_reason=refusal,
+                    taxonomy_domain=timer.meta.get("taxonomy_domain"),
+                    taxonomy_confidence=timer.meta.get("taxonomy_confidence"),
+                    query=anon_question,
+                    user=user,
+                    db=db,
+                    request_id=request_id,
                 )
                 return_payload["query_id"] = request_id
-                return_payload["refusal_reason"] = infer_refusal_reason(
-                    retrieved_count=int(retrieved_n or 0),
-                    kept_count=int(kept_n or 0),
-                    no_context=True,
-                    answer=return_payload.get("answer"),
-                )
                 response_payload = return_payload
                 return return_payload
 
@@ -820,6 +877,7 @@ def build_rag_chain(
                 "unverified_citations": citation_result.unverified_citations,
                 "grounded": True,
                 "no_context": False,
+                "response_type": "grounded",
             }
             if expert_payload:
                 cached_payload["expert_opinion_required"] = expert_payload
@@ -849,8 +907,11 @@ def build_rag_chain(
                     answer=response.get("answer"),
                     llm_full_refuse=True,
                 )
+                response["response_type"] = "refused"
+                response["grounded"] = False
             else:
                 response["refusal_reason"] = None
+                response["response_type"] = "grounded"
             response_payload = response
             return response
         finally:
@@ -907,14 +968,20 @@ def build_rag_chain(
                 )
                 trace.generate["final_confidence_score"] = rp.get("citation_accuracy")
                 trace.generate["confidence_threshold"] = MIN_SOURCE_RELEVANCE_SCORE
-                trace.generate["outcome"] = infer_outcome(
-                    no_context=no_ctx,
-                    llm_full_refuse=llm_refuse,
-                    citation_confidence=rp.get("citation_confidence"),
-                )
+                resp_type = rp.get("response_type")
+                if resp_type == "general_guidance":
+                    outcome = "general_guidance"
+                else:
+                    outcome = infer_outcome(
+                        no_context=no_ctx,
+                        llm_full_refuse=llm_refuse,
+                        citation_confidence=rp.get("citation_confidence"),
+                        response_type=resp_type,
+                    )
+                trace.generate["outcome"] = outcome
                 if timer.meta.get("cache_hit"):
                     trace.extra["cache_hit"] = True
-                    if not llm_refuse and not no_ctx:
+                    if not llm_refuse and not no_ctx and resp_type != "general_guidance":
                         # Refuse answers are not cached; treat hit as answered path
                         if trace.generate["outcome"] is None:
                             trace.generate["outcome"] = "answered"
@@ -927,6 +994,15 @@ def build_rag_chain(
                     response_payload.setdefault("query_id", request_id)
                     if refusal and not response_payload.get("refusal_reason"):
                         response_payload["refusal_reason"] = refusal
+                    if not response_payload.get("response_type"):
+                        if resp_type:
+                            response_payload["response_type"] = resp_type
+                        elif outcome == "general_guidance":
+                            response_payload["response_type"] = "general_guidance"
+                        elif no_ctx or llm_refuse or refusal:
+                            response_payload["response_type"] = "refused"
+                        else:
+                            response_payload["response_type"] = "grounded"
                 trace.emit()
                 timer.log_summary(logger)
             except Exception:

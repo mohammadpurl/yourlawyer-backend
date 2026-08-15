@@ -525,6 +525,7 @@ async def ask(
                     "refusal_reason",
                     "no_context",
                     "grounded",
+                    "response_type",
                 ]:
                     if key in result:
                         minimal_result[key] = result[key]

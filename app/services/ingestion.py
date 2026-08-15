@@ -29,18 +29,16 @@ def _content_hash(text: str) -> str:
 
 def hash_page_content(page_content: str) -> str:
     """Compute content_hash for stored or chunked text (strips E5 passage prefix)."""
-    text = page_content.strip()
-    if text.startswith(E5_PASSAGE_PREFIX):
-        text = text[len(E5_PASSAGE_PREFIX) :]
-    return _content_hash(text)
+    from app.services.vectorstore import strip_e5_prefix
+
+    return _content_hash(strip_e5_prefix(page_content or ""))
 
 
 def _e5_passage_text(text: str) -> str:
     """Prefix document text for multilingual-e5 passage encoding."""
-    stripped = text.strip()
-    if stripped.startswith(E5_PASSAGE_PREFIX):
-        return stripped
-    return f"{E5_PASSAGE_PREFIX}{stripped}"
+    from app.services.vectorstore import prefix_passage
+
+    return prefix_passage(text or "")
 
 
 def parse_source_metadata(source: str) -> Dict[str, Any]:

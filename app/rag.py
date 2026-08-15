@@ -1,3 +1,5 @@
+"""Legacy thin RAG entrypoint — prefer ``app.services.rag.build_rag_chain``."""
+
 from typing import Dict, Any
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -5,8 +7,8 @@ from langchain_openai import ChatOpenAI
 from langchain_ollama import OllamaLLM
 from langchain_core.output_parsers import StrOutputParser
 
-from .vectorstore import get_vectorstore
-from .config import DEFAULT_TOP_K, OPENAI_API_KEY, OLLAMA_MODEL
+from app.services.vectorstore import get_vectorstore, prefix_query
+from app.core.config import DEFAULT_TOP_K, OPENAI_API_KEY, OLLAMA_MODEL
 
 
 PERSIAN_LEGAL_SYSTEM_PROMPT = """
@@ -27,7 +29,7 @@ def _get_llm():
 
 def build_rag_chain(k: int = DEFAULT_TOP_K):
     vs = get_vectorstore()
-    # E5 requires query prefix
+    # E5 requires query prefix — applied via prefix_query() at invoke time
     retriever = vs.as_retriever(search_kwargs={"k": k, "score_threshold": 0.0})
 
     llm = _get_llm()
@@ -42,9 +44,8 @@ def build_rag_chain(k: int = DEFAULT_TOP_K):
     )
 
     if llm is None:
-        # Fallback: return concatenated context as an extractive baseline
         def run_fallback(question: str):
-            docs = retriever.invoke("query: " + question)
+            docs = retriever.invoke(prefix_query(question))
             context = "\n\n".join(d.page_content for d in docs)
             answer = (
                 "بر اساس متون یافت‌شده، موارد مرتبط در زیر آمده است. لطفاً با دقت مطالعه کنید و در صورت نیاز سوال را دقیق‌تر مطرح نمایید.\n\n"
@@ -62,7 +63,7 @@ def build_rag_chain(k: int = DEFAULT_TOP_K):
                 "question": x["question"],
                 "docs": get_vectorstore()
                 .as_retriever(search_kwargs={"k": k})
-                .invoke("query: " + x["question"]),
+                .invoke(prefix_query(x["question"])),
             }
         )
         | (
@@ -79,11 +80,10 @@ def build_rag_chain(k: int = DEFAULT_TOP_K):
 
     def run(question: str) -> Dict[str, Any]:
         result_text = chain.invoke({"question": question})
-        # Retrieve sources again (quick)
         docs = (
             get_vectorstore()
             .as_retriever(search_kwargs={"k": k})
-            .invoke("query: " + question)
+            .invoke(prefix_query(question))
         )
         sources = [d.metadata.get("source", "") for d in docs]
         return {"answer": result_text, "sources": sources}

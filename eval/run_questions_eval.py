@@ -74,12 +74,16 @@ def _infer_outcome_from_response(resp: dict[str, Any], trace: dict | None) -> st
         out = trace["generate"].get("outcome")
         if out:
             return str(out)
+    if resp.get("response_type") == "general_guidance":
+        return "general_guidance"
     if resp.get("is_error"):
         return "refused"
     if resp.get("no_context") or resp.get("refusal_reason"):
         return "refused"
     answer = resp.get("answer") or ""
-    if isinstance(answer, str) and answer.strip().startswith("اطلاعات کافی در منابع موجود"):
+    if isinstance(answer, str) and answer.strip().startswith(
+        "اطلاعات کافی در منابع موجود"
+    ):
         return "refused"
     conf = resp.get("citation_confidence")
     if conf in {"partial", "unverified"}:
@@ -227,6 +231,7 @@ def summarize(rows: list[dict]) -> dict[str, Any]:
     for domain, drows in sorted(domain_rows.items()):
         answered = sum(1 for r in drows if r["actual_outcome"] == "answered")
         refused = sum(1 for r in drows if r["actual_outcome"] == "refused")
+        guidance = sum(1 for r in drows if r["actual_outcome"] == "general_guidance")
         low = sum(1 for r in drows if r["actual_outcome"] == "low_confidence_answered")
         scores = [
             r.get("final_confidence_score")
@@ -236,12 +241,14 @@ def summarize(rows: list[dict]) -> dict[str, Any]:
         reasons = Counter(
             r.get("refusal_reason")
             for r in drows
-            if r["actual_outcome"] == "refused" and r.get("refusal_reason")
+            if r["actual_outcome"] in {"refused", "general_guidance"}
+            and r.get("refusal_reason")
         )
         by_domain[domain] = {
             "total": len(drows),
             "answered": answered,
             "refused": refused,
+            "general_guidance": guidance,
             "low_confidence_answered": low,
             "avg_confidence": round(sum(scores) / len(scores), 3) if scores else None,
             "refusal_reasons": dict(reasons),
@@ -251,12 +258,16 @@ def summarize(rows: list[dict]) -> dict[str, Any]:
         if r.get("refusal_reason"):
             refusal_reasons[r["refusal_reason"]] += 1
         expected = r.get("expected_outcome")
+        allowed = r.get("expected_outcomes")
+        if not allowed and expected:
+            allowed = [expected]
         actual = r.get("actual_outcome")
-        if expected and actual and expected != actual:
+        if allowed and actual and actual not in allowed:
             unexpected.append(
                 {
                     "id": r["id"],
                     "expected": expected,
+                    "expected_outcomes": allowed,
                     "got": actual,
                     "refusal_reason": r.get("refusal_reason"),
                     "score": r.get("final_confidence_score"),
@@ -268,6 +279,7 @@ def summarize(rows: list[dict]) -> dict[str, Any]:
         "total": len(rows),
         "answered": outcomes.get("answered", 0),
         "refused": outcomes.get("refused", 0),
+        "general_guidance": outcomes.get("general_guidance", 0),
         "low_confidence_answered": outcomes.get("low_confidence_answered", 0),
         "by_domain": by_domain,
         "refusal_reason_breakdown": dict(refusal_reasons),
@@ -279,7 +291,9 @@ def print_summary(summary: dict[str, Any]) -> None:
     print("\n=== Eval Summary ===")
     print(
         f"Total: {summary['total']} | Answered: {summary['answered']} | "
-        f"Refused: {summary['refused']} | Low-confidence: {summary['low_confidence_answered']}"
+        f"Refused: {summary['refused']} | "
+        f"General-guidance: {summary.get('general_guidance', 0)} | "
+        f"Low-confidence: {summary['low_confidence_answered']}"
     )
     print("\nBy domain:")
     for domain, info in (summary.get("by_domain") or {}).items():
@@ -288,6 +302,8 @@ def print_summary(summary: dict[str, Any]) -> None:
             reasons = info.get("refusal_reasons") or {}
             reason_s = ", ".join(f"{k}:{v}" for k, v in reasons.items()) or "unknown"
             parts.append(f"{info['refused']} refused (reason: {reason_s})")
+        if info.get("general_guidance"):
+            parts.append(f"{info['general_guidance']} general_guidance")
         if info["low_confidence_answered"]:
             parts.append(f"{info['low_confidence_answered']} low-confidence")
         avg = info.get("avg_confidence")
@@ -445,6 +461,7 @@ def main() -> int:
             "domain": item.get("domain"),
             "question": item.get("question"),
             "expected_outcome": item.get("expected_outcome"),
+            "expected_outcomes": item.get("expected_outcomes"),
             "expected_min_confidence": item.get("expected_min_confidence"),
             "expected_answer_contains": needles,
             "actual_outcome": outcome,
@@ -471,6 +488,7 @@ def main() -> int:
                     "error_code",
                     "refusal_reason",
                     "query_id",
+                    "response_type",
                 )
                 if isinstance(resp, dict) and k in resp
             },

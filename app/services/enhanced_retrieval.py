@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.documents import Document
 
 from app.services.question_classifier import LegalDomain, taxonomy_to_legacy
-from app.services.vectorstore import get_vectorstore
+from app.services.vectorstore import get_vectorstore, prefix_query
 from app.core.config import (
     CHROMA_COLLECTION,
     ENABLE_DOMAIN_FILTERED_RETRIEVAL,
@@ -16,17 +16,6 @@ from app.core.config import (
 )
 
 logger = logging.getLogger(__name__)
-
-_QUERY_PREFIX = "query: "
-
-
-def _as_e5_query(query: str) -> str:
-    q = (query or "").strip()
-    if not q:
-        return q
-    if q.startswith(_QUERY_PREFIX):
-        return q
-    return f"{_QUERY_PREFIX}{q}"
 
 
 class EnhancedRetriever:
@@ -53,7 +42,8 @@ class EnhancedRetriever:
         taxonomy_subdomain: Optional[str] = None,
     ) -> List[Document]:
         """Retrieve with optional taxonomy domain/subdomain filter + fallbacks."""
-        query_text = _as_e5_query(query)
+        # Prefix at the edge of embedding search only (not for classify/logs).
+        query_text = prefix_query(query)
         search_kwargs: Dict[str, Any] = {"k": k}
 
         if (
@@ -104,6 +94,8 @@ class EnhancedRetriever:
         return docs
 
     def _safe_invoke(self, query_text: str, search_kwargs: Dict[str, Any]) -> List[Document]:
+        # Defense in depth: ensure E5 query prefix even if caller forgot.
+        query_text = prefix_query(query_text)
         try:
             retriever = self.vectorstore.as_retriever(search_kwargs=search_kwargs)
             return list(retriever.invoke(query_text) or [])

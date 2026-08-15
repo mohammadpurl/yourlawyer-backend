@@ -2,6 +2,11 @@ import os
 from pathlib import Path
 from typing import List
 
+from dotenv import load_dotenv
+
+# Load .env before reading any settings (override stale shell exports).
+load_dotenv(override=True)
+
 # Hugging Face Hub settings must be set before huggingface_hub is imported anywhere.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "0")
@@ -37,6 +42,15 @@ RAG_REQUIRE_RETRIEVED_CONTEXT = (
 RAG_NO_CONTEXT_MESSAGE = os.getenv(
     "RAG_NO_CONTEXT_MESSAGE",
     "اطلاعات کافی در منابع موجود برای پاسخ دقیق به این سؤال یافت نشد.",
+)
+
+# Level-3 orientation when classify is confident but retrieval is empty/weak.
+# Default off — enable only after manual review of sample outputs.
+ENABLE_GENERAL_GUIDANCE_FALLBACK = (
+    os.getenv("ENABLE_GENERAL_GUIDANCE_FALLBACK", "false").lower() == "true"
+)
+GENERAL_GUIDANCE_MIN_CLASSIFY_CONFIDENCE = float(
+    os.getenv("GENERAL_GUIDANCE_MIN_CLASSIFY_CONFIDENCE", "0.6")
 )
 
 # Database
@@ -96,9 +110,9 @@ RERANKER_MODEL = os.getenv(
     "RERANKER_MODEL", "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
 )
 # Drop chunks below this hybrid CE+keyword score before generate.
-# Recalibrated after 2026-08 audit (English MiniLM + 0.25 was meaningless).
-# With hybrid keyword blend, ~0.40 drops obvious off-topic while keeping civil hits.
-MIN_SOURCE_RELEVANCE_SCORE = float(os.getenv("MIN_SOURCE_RELEVANCE_SCORE", "0.40"))
+# mmarco hybrid scores for on-topic Persian law often land ~0.17–0.30 (not ~1.0).
+# 0.40 refused good hits (e.g. طلاق توافقی / قانون حمایت خانواده at ~0.20).
+MIN_SOURCE_RELEVANCE_SCORE = float(os.getenv("MIN_SOURCE_RELEVANCE_SCORE", "0.15"))
 
 # Hierarchical taxonomy classify → Chroma metadata filter.
 # Default off until corpus is re-tagged with domain/subdomain metadata.
