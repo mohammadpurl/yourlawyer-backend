@@ -48,6 +48,11 @@ class AskResponse(BaseModel):
     domain_label: Optional[str] = None
     domain_confidence: Optional[float] = None
     expert_opinion_required: Optional[ExpertOpinionRequired] = None
+    # Query-level instrumentation (correlate with QUERY_TRACE JSONL)
+    query_id: Optional[str] = None
+    refusal_reason: Optional[str] = None
+    no_context: Optional[bool] = None
+    grounded: Optional[bool] = None
 
 
 class SourceInfo(BaseModel):

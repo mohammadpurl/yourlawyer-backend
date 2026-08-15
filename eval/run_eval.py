@@ -11,10 +11,14 @@
 انسان (لیلا / وکیل) انجام شود — این اسکریپت جایگزین بازبینی انسانی نیست.
 
 Usage:
+  # Hard-questions structural suite (legacy)
   python eval/run_eval.py --mode detect
   python eval/run_eval.py --mode detect --ids eo-001,bl-001
   python eval/run_eval.py --mode full --limit 3
-  python eval/run_eval.py --mode detect --compare eval/results/baseline.json
+
+  # Query-level pipeline harness (questions.jsonl + refusal breakdown)
+  python eval/run_eval.py --harness questions --via inprocess --limit 2
+  python eval/run_questions_eval.py --via api
 """
 
 from __future__ import annotations
@@ -310,7 +314,48 @@ def compare_runs(current: list[dict], baseline: list[dict]) -> dict:
 
 def main() -> int:
     _load_env()
+    # Early dispatch: questions.jsonl pipeline harness (instrumentation eval)
+    if "--harness" in sys.argv:
+        harness_idx = sys.argv.index("--harness")
+        harness = (
+            sys.argv[harness_idx + 1]
+            if harness_idx + 1 < len(sys.argv)
+            else "questions"
+        )
+        if harness in {"questions", "pipeline"}:
+            new_argv = [sys.argv[0]]
+            skip_next = False
+            for a in sys.argv[1:]:
+                if skip_next:
+                    skip_next = False
+                    continue
+                if a == "--harness":
+                    skip_next = True
+                    continue
+                new_argv.append(a)
+            sys.argv = new_argv
+            # Import by path so `eval` need not be a package
+            import importlib.util
+
+            harness_path = Path(__file__).resolve().parent / "run_questions_eval.py"
+            spec = importlib.util.spec_from_file_location(
+                "run_questions_eval", harness_path
+            )
+            assert spec and spec.loader
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.main()
+        if harness != "hard":
+            print(f"Unknown harness: {harness}", file=sys.stderr)
+            return 2
+
     parser = argparse.ArgumentParser(description="Hard-questions RAG eval (read-mostly)")
+    parser.add_argument(
+        "--harness",
+        choices=("hard", "questions", "pipeline"),
+        default="hard",
+        help="hard=legacy structural set; questions=refusal-breakdown harness",
+    )
     parser.add_argument(
         "--mode",
         choices=("detect", "retrieve", "full"),

@@ -23,9 +23,11 @@ wheels/
 .installed.cfg
 *.egg
 
-# Eval run artifacts (keep jsonl seed in git; ignore generated reports)
+storage/query_traces.jsonl
 eval/results/*.json
 !eval/results/.gitkeep
+eval/results/*.html
+eval/results/relevance_scores_for_labeling.jsonl
 
 
 # Cypress

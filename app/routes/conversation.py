@@ -79,6 +79,30 @@ def get_conversation(
     return conv
 
 
+@router.delete("/{conversation_id}", status_code=204)
+def delete_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    حذف دائمی یک گفتگو و پیام‌هایش (فقط مالک).
+    """
+    conv = (
+        db.query(Conversation)
+        .filter(
+            Conversation.id == conversation_id,
+            Conversation.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not conv:
+        raise HTTPException(status_code=404, detail="گفتگو پیدا نشد")
+    db.delete(conv)
+    db.commit()
+    return None
+
+
 @router.post("/{conversation_id}/ask", response_model=ChatResponse)
 def ask_in_conversation(
     conversation_id: int,
@@ -212,4 +236,8 @@ def ask_in_conversation(
         domain_label=result.get("domain_label"),  # type: ignore[union-attr] # noqa: E501
         domain_confidence=result.get("domain_confidence"),  # type: ignore[union-attr] # noqa: E501
         expert_opinion_required=result.get("expert_opinion_required"),  # type: ignore[union-attr]
+        query_id=result.get("query_id"),  # type: ignore[union-attr]
+        refusal_reason=result.get("refusal_reason"),  # type: ignore[union-attr]
+        no_context=result.get("no_context"),  # type: ignore[union-attr]
+        grounded=result.get("grounded"),  # type: ignore[union-attr]
     )

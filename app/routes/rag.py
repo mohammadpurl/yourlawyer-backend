@@ -521,6 +521,10 @@ async def ask(
                     "domain_label",
                     "domain_confidence",
                     "expert_opinion_required",
+                    "query_id",
+                    "refusal_reason",
+                    "no_context",
+                    "grounded",
                 ]:
                     if key in result:
                         minimal_result[key] = result[key]

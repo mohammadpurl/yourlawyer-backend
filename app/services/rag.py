@@ -11,8 +11,14 @@ from langchain_classic.memory import ConversationBufferMemory
 from app.services.vectorstore import get_vectorstore
 from app.services.enhanced_retrieval import EnhancedRetriever
 from app.services.question_classifier import get_domain_label
-from app.services.reranker import rerank_documents, score_documents, filter_by_min_score
+from app.services.reranker import score_documents, filter_by_min_score
 from app.services.pipeline_timing import PipelineTimer
+from app.services.query_trace import (
+    QueryTrace,
+    _chunk_record,
+    infer_outcome,
+    infer_refusal_reason,
+)
 from app.core.config import (
     DEFAULT_TOP_K,
     OPENAI_API_KEY,
@@ -23,6 +29,8 @@ from app.core.config import (
     RAG_NO_CONTEXT_MESSAGE,
     RERANKER_ENABLED,
     ENABLE_DOMAIN_FILTERED_RETRIEVAL,
+    CHROMA_COLLECTION,
+    MIN_SOURCE_RELEVANCE_SCORE,
 )
 from app.core.cache import (
     cache_rag_result,
@@ -468,20 +476,32 @@ def build_rag_chain(
                 timer.mark("retrieve")
 
         retrieved_before_rerank = len(docs) if docs else 0
-
-        # Always apply relevance score filter (CrossEncoder or keyword fallback)
-        if docs:
-            if use_rerank:
-                docs = rerank_documents(question, docs, top_k=k_val)
-            else:
-                scored = score_documents(question, docs)
-                docs = filter_by_min_score(scored)[:k_val]
         if timer:
+            timer.set_meta(
+                retrieve_chunks=[_chunk_record(d) for d in (docs or [])[:20]],
+                domain_filter_applied=bool(
+                    ENABLE_DOMAIN_FILTERED_RETRIEVAL
+                    and tax_meta.get("confident")
+                    and tax_meta.get("domain")
+                    and tax_meta.get("domain") != "نامشخص"
+                ),
+            )
+
+        # Always score; keep scores for QUERY_TRACE before threshold filter
+        scored_pairs: list = []
+        if docs:
+            scored_pairs = score_documents(question, docs)
+            docs = filter_by_min_score(scored_pairs)[:k_val]
+        if timer:
+            dropped = max(0, len(scored_pairs) - len(docs or []))
             timer.mark("rerank")
             timer.set_meta(
                 retrieved_count=retrieved_before_rerank,
                 reranked_count=len(docs) if docs else 0,
                 low_trust_retrieval=not bool(tax_meta.get("confident")),
+                rerank_chunks=[_chunk_record(d, s) for d, s in scored_pairs[:20]],
+                chunks_dropped_below_threshold=dropped,
+                min_relevance_threshold=MIN_SOURCE_RELEVANCE_SCORE,
             )
 
         return docs, domain, confidence
@@ -521,14 +541,22 @@ def build_rag_chain(
         from uuid import uuid4
 
         logger = logging.getLogger(__name__)
-        timer = PipelineTimer(request_id=str(uuid4()))
+        request_id = str(uuid4())
+        timer = PipelineTimer(request_id=request_id)
+        trace = QueryTrace(query_id=request_id)
         timer.set_meta(
             model=DEFAULT_LLM_MODEL if use_openai else (OLLAMA_MODEL or "none"),
             use_enhanced_retrieval=use_enhanced_retrieval,
             use_reranking=use_reranking,
             top_k=k,
         )
+        trace.generate["model"] = (
+            DEFAULT_LLM_MODEL if use_openai else (OLLAMA_MODEL or "none")
+        )
+        trace.retrieve["top_k_requested"] = k
+        trace.retrieve["collection"] = CHROMA_COLLECTION
 
+        response_payload: Dict[str, Any] | None = None
         start_time = time.time()
         try:
             # Parallel to taxonomy classify: keyword detect expert-opinion domains
@@ -539,10 +567,17 @@ def build_rag_chain(
                     expert_opinion_domain=expert_domain.get("id"),
                     expert_opinion_required=True,
                 )
+                trace.extra["expert_opinion_domain"] = expert_domain.get("id")
 
             anonymizer = get_pii_anonymizer()
             anon_question, mappings = anonymizer.anonymize(question)
             timer.mark("anonymize")
+            trace.set_queries(
+                anonymized=anon_question,
+                logged_preview=anonymizer.anonymize_for_logging(
+                    question or "", max_len=200
+                ),
+            )
 
             cached_result = get_cached_rag_result(
                 anon_question, k, use_enhanced_retrieval
@@ -567,6 +602,8 @@ def build_rag_chain(
                     cached["answer"] = anonymizer.restore(cached["answer"], mappings)
                 if expert_payload:
                     cached["expert_opinion_required"] = expert_payload
+                cached["query_id"] = request_id
+                response_payload = cached
                 return cached
             timer.mark("cache_lookup")
             timer.set_meta(cache_hit=False, cache_skipped_refuse=skip_refuse_cache)
@@ -602,7 +639,7 @@ def build_rag_chain(
                     timer.meta.get("taxonomy_domain"),
                     timer.meta.get("taxonomy_subdomain"),
                 )
-                return _no_context_response(
+                return_payload = _no_context_response(
                     start_time=start_time,
                     anonymizer=anonymizer,
                     mappings=mappings,
@@ -610,6 +647,15 @@ def build_rag_chain(
                     confidence=confidence,
                     expert_opinion_required=expert_payload,
                 )
+                return_payload["query_id"] = request_id
+                return_payload["refusal_reason"] = infer_refusal_reason(
+                    retrieved_count=int(retrieved_n or 0),
+                    kept_count=int(kept_n or 0),
+                    no_context=True,
+                    answer=return_payload.get("answer"),
+                )
+                response_payload = return_payload
+                return return_payload
 
             chain_inputs: Dict[str, Any] = {
                 "question": anon_question,
@@ -660,10 +706,12 @@ def build_rag_chain(
 
             if use_openai:
                 if user is None or db is None:
-                    return rag_error_payload(
+                    err = rag_error_payload(
                         "پیکربندی ناقص محدودیت مصرف برای فراخوانی مدل",
                         500,
                     )
+                    response_payload = err
+                    return err
                 try:
                     result_text = call_llm_with_quota_check(
                         messages=messages,
@@ -677,9 +725,13 @@ def build_rag_chain(
                     )
                 except HTTPException as e:
                     detail = e.detail if isinstance(e.detail, str) else str(e.detail)
-                    return rag_error_payload(detail, e.status_code)
+                    err = rag_error_payload(detail, e.status_code)
+                    response_payload = err
+                    return err
                 except QuotaExceeded as e:
-                    return rag_error_payload(e.message, e.status_code)
+                    err = rag_error_payload(e.message, e.status_code)
+                    response_payload = err
+                    return err
             else:
                 ollama_chain = gen_prompt | llm | StrOutputParser()
                 result_text = ollama_chain.invoke(chain_inputs)
@@ -787,11 +839,97 @@ def build_rag_chain(
 
             response = dict(cached_payload)
             response["answer"] = anonymizer.restore(result_text, mappings)
+            response["query_id"] = request_id
+            llm_refuse = _is_full_refuse_answer(result_text)
+            if llm_refuse:
+                response["refusal_reason"] = infer_refusal_reason(
+                    retrieved_count=int(timer.meta.get("retrieved_count") or 0),
+                    kept_count=int(timer.meta.get("reranked_count") or 0),
+                    no_context=False,
+                    answer=response.get("answer"),
+                    llm_full_refuse=True,
+                )
+            else:
+                response["refusal_reason"] = None
+            response_payload = response
             return response
         finally:
             try:
+                # Fill structured QUERY_TRACE from timer meta + response
+                trace.classify = {
+                    "domain": timer.meta.get("taxonomy_domain"),
+                    "subdomain": timer.meta.get("taxonomy_subdomain"),
+                    "confidence": timer.meta.get("taxonomy_confidence"),
+                    "confident": timer.meta.get("taxonomy_confident"),
+                    "model": "taxonomy_llm_or_heuristic",
+                    "cached": bool(timer.meta.get("cache_hit")),
+                }
+                trace.retrieve["domain_filter_applied"] = bool(
+                    timer.meta.get("domain_filter_applied")
+                )
+                trace.retrieve["chunks_returned"] = list(
+                    timer.meta.get("retrieve_chunks") or []
+                )
+                trace.retrieve["chunks_count"] = timer.meta.get("retrieved_count")
+                trace.rerank["chunks_after_rerank"] = list(
+                    timer.meta.get("rerank_chunks") or []
+                )
+                trace.rerank["min_relevance_threshold"] = timer.meta.get(
+                    "min_relevance_threshold", MIN_SOURCE_RELEVANCE_SCORE
+                )
+                trace.rerank["chunks_dropped_below_threshold"] = timer.meta.get(
+                    "chunks_dropped_below_threshold", 0
+                )
+                trace.timing_ms = {
+                    **dict(timer.timings),
+                    "total": timer.total_ms(),
+                }
+                rp = response_payload or {}
+                no_ctx = bool(rp.get("no_context") or timer.meta.get("no_context"))
+                llm_refuse = rp.get("refusal_reason") == "llm_refused_despite_chunks"
+                if not llm_refuse and isinstance(rp.get("answer"), str):
+                    llm_refuse = _is_full_refuse_answer(rp["answer"])
+                retrieved_n = int(timer.meta.get("retrieved_count") or 0)
+                kept_n = int(timer.meta.get("reranked_count") or 0)
+                tax_domain = timer.meta.get("taxonomy_domain")
+                out_of_domain = bool(
+                    tax_domain in {None, "", "نامشخص", "سایر"}
+                    and (no_ctx or llm_refuse)
+                    and retrieved_n <= 0
+                )
+                refusal = rp.get("refusal_reason") or infer_refusal_reason(
+                    retrieved_count=retrieved_n,
+                    kept_count=kept_n,
+                    no_context=no_ctx,
+                    answer=rp.get("answer"),
+                    llm_full_refuse=llm_refuse,
+                    out_of_domain=out_of_domain,
+                )
+                trace.generate["final_confidence_score"] = rp.get("citation_accuracy")
+                trace.generate["confidence_threshold"] = MIN_SOURCE_RELEVANCE_SCORE
+                trace.generate["outcome"] = infer_outcome(
+                    no_context=no_ctx,
+                    llm_full_refuse=llm_refuse,
+                    citation_confidence=rp.get("citation_confidence"),
+                )
+                if timer.meta.get("cache_hit"):
+                    trace.extra["cache_hit"] = True
+                    if not llm_refuse and not no_ctx:
+                        # Refuse answers are not cached; treat hit as answered path
+                        if trace.generate["outcome"] is None:
+                            trace.generate["outcome"] = "answered"
+                trace.generate["refusal_reason"] = refusal
+                if rp.get("is_error"):
+                    trace.generate["outcome"] = "refused"
+                    trace.generate["refusal_reason"] = "pipeline_error"
+                # Ensure response carries instrumentation fields (API schema)
+                if response_payload is not None and isinstance(response_payload, dict):
+                    response_payload.setdefault("query_id", request_id)
+                    if refusal and not response_payload.get("refusal_reason"):
+                        response_payload["refusal_reason"] = refusal
+                trace.emit()
                 timer.log_summary(logger)
             except Exception:
-                logger.exception("Failed to log PIPELINE_TIMING")
+                logger.exception("Failed to log PIPELINE_TIMING / QUERY_TRACE")
 
     return run
