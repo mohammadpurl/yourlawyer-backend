@@ -55,6 +55,18 @@ data/uploads/
 data/uploads/**
 *.incomplete
 
+# Chroma volumes / backups often sit at repo root on the server (WinSCP / migrate).
+# Baking these into the image fills the disk and breaks `chown -R` during build.
+chroma_storage/
+chroma_storage/**
+chroma_backup*/
+chroma_backup*/**
+chroma/
+chroma/**
+**/data_level0.bin
+**/chroma.sqlite3
+**/chroma.sqlite3-*
+
 # Chroma / DB dumps — often left at repo root on the server after WinSCP
 chroma_snapshot.tar
 **/chroma_snapshot.tar

@@ -42,8 +42,16 @@ RUN useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
 
+# Do NOT chown -R /app: on servers, large chroma_backup*/chroma_storage trees may
+# still sneak into context and exhaust disk during recursive chown.
 RUN mkdir -p /app/storage/chroma /app/storage/models /app/storage/huggingface /app/data/uploads && \
-    chown -R appuser:appuser /app && \
+    chown -R appuser:appuser \
+      /app/app \
+      /app/scripts \
+      /app/docker-entrypoint.sh \
+      /app/storage \
+      /app/data \
+      /opt/venv && \
     chmod +x /app/docker-entrypoint.sh && \
     python -c "import torch; print('torch', torch.__version__); assert not torch.cuda.is_available()"
 
