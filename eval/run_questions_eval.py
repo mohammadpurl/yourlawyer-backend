@@ -149,6 +149,14 @@ def run_via_inprocess(question: str, *, top_k: int) -> dict:
     user = None
     db = None
     if OPENAI_API_KEY:
+        # Register all ORM mappers (same as app.main) before querying User
+        import app.models.user  # noqa: F401
+        import app.models.usage  # noqa: F401
+        import app.models.login_history  # noqa: F401
+        import app.models.template  # noqa: F401
+        import app.models.citation  # noqa: F401
+        import app.models.sample_document  # noqa: F401
+        import app.models.payment  # noqa: F401
         from app.core.database import SessionLocal
         from app.models.user import User
 
