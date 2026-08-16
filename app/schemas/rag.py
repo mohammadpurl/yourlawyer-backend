@@ -53,8 +53,11 @@ class AskResponse(BaseModel):
     refusal_reason: Optional[str] = None
     no_context: Optional[bool] = None
     grounded: Optional[bool] = None
-    # grounded | refused | general_guidance — see docs/api_response_types.md
+    # grounded | refused | general_guidance | canned
     response_type: Optional[str] = None
+    # True when intent short-circuited (no retrieval / no citations)
+    is_canned_response: Optional[bool] = None
+    intent: Optional[str] = None
 
 
 class SourceInfo(BaseModel):

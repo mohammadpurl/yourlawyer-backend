@@ -241,4 +241,6 @@ def ask_in_conversation(
         no_context=result.get("no_context"),  # type: ignore[union-attr]
         grounded=result.get("grounded"),  # type: ignore[union-attr]
         response_type=result.get("response_type"),  # type: ignore[union-attr]
+        is_canned_response=result.get("is_canned_response"),  # type: ignore[union-attr]
+        intent=result.get("intent"),  # type: ignore[union-attr]
     )

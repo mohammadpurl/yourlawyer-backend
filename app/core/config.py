@@ -53,6 +53,13 @@ GENERAL_GUIDANCE_MIN_CLASSIFY_CONFIDENCE = float(
     os.getenv("GENERAL_GUIDANCE_MIN_CLASSIFY_CONFIDENCE", "0.6")
 )
 
+# Pre-RAG intent short-circuit (meta/greeting/out_of_scope → canned, no Chroma).
+# Default true; set false for instant rollback.
+ENABLE_INTENT_DETECTION = (
+    os.getenv("ENABLE_INTENT_DETECTION", "true").lower() == "true"
+)
+INTENT_CACHE_TTL_SECONDS = int(os.getenv("INTENT_CACHE_TTL_SECONDS", "3600"))
+
 # Database
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL", f"sqlite:///{(BASE_DIR / 'storage' / 'app.db').as_posix()}"

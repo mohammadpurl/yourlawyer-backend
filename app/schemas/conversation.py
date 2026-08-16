@@ -59,5 +59,7 @@ class ChatResponse(BaseModel):
     refusal_reason: Optional[str] = None
     no_context: Optional[bool] = None
     grounded: Optional[bool] = None
-    # grounded | refused | general_guidance — see docs/api_response_types.md
+    # grounded | refused | general_guidance | canned
     response_type: Optional[str] = None
+    is_canned_response: Optional[bool] = None
+    intent: Optional[str] = None

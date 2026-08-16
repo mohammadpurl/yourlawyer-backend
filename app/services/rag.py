@@ -24,6 +24,10 @@ from app.services.refusal_guidance import (
     generate_general_guidance,
     should_offer_general_guidance,
 )
+from app.services.intent_detector import (
+    canned_payload_for_intent,
+    detect_intent,
+)
 from app.core.config import (
     DEFAULT_TOP_K,
     OPENAI_API_KEY,
@@ -34,6 +38,7 @@ from app.core.config import (
     RAG_NO_CONTEXT_MESSAGE,
     RERANKER_ENABLED,
     ENABLE_DOMAIN_FILTERED_RETRIEVAL,
+    ENABLE_INTENT_DETECTION,
     CHROMA_COLLECTION,
     MIN_SOURCE_RELEVANCE_SCORE,
 )
@@ -629,6 +634,45 @@ def build_rag_chain(
                 ),
             )
 
+            # Pre-RAG intent short-circuit (no Chroma / no generate for non-legal)
+            if ENABLE_INTENT_DETECTION:
+                intent_result = detect_intent(anon_question)
+                timer.mark("detect_intent")
+                timer.set_meta(
+                    intent=intent_result.intent,
+                    intent_confidence=intent_result.confidence,
+                )
+                trace.extra["intent"] = intent_result.intent
+                trace.extra["intent_confidence"] = intent_result.confidence
+                if intent_result.intent != "legal_question":
+                    answer = canned_payload_for_intent(intent_result.intent)
+                    answer = anonymizer.restore(answer, mappings)
+                    elapsed = time.time() - start_time
+                    return_payload = {
+                        "answer": answer,
+                        "sources": [],
+                        "response_time_seconds": round(elapsed, 3),
+                        "citation_count": 0,
+                        "citation_accuracy": None,
+                        "citation_confidence": None,
+                        "cited_articles": [],
+                        "unverified_citations": [],
+                        "grounded": False,
+                        "no_context": False,
+                        "response_type": "canned",
+                        "is_canned_response": True,
+                        "intent": intent_result.intent,
+                        "query_id": request_id,
+                        "refusal_reason": None,
+                    }
+                    if expert_payload:
+                        return_payload["expert_opinion_required"] = expert_payload
+                    response_payload = return_payload
+                    return return_payload
+            else:
+                timer.mark("detect_intent")
+                timer.set_meta(intent="legal_question", intent_skipped=True)
+
             cached_result = get_cached_rag_result(
                 anon_question, k, use_enhanced_retrieval
             )
@@ -969,7 +1013,9 @@ def build_rag_chain(
                 trace.generate["final_confidence_score"] = rp.get("citation_accuracy")
                 trace.generate["confidence_threshold"] = MIN_SOURCE_RELEVANCE_SCORE
                 resp_type = rp.get("response_type")
-                if resp_type == "general_guidance":
+                if resp_type == "canned" or rp.get("is_canned_response"):
+                    outcome = "canned"
+                elif resp_type == "general_guidance":
                     outcome = "general_guidance"
                 else:
                     outcome = infer_outcome(
@@ -981,7 +1027,11 @@ def build_rag_chain(
                 trace.generate["outcome"] = outcome
                 if timer.meta.get("cache_hit"):
                     trace.extra["cache_hit"] = True
-                    if not llm_refuse and not no_ctx and resp_type != "general_guidance":
+                    if (
+                        not llm_refuse
+                        and not no_ctx
+                        and resp_type not in {"general_guidance", "canned"}
+                    ):
                         # Refuse answers are not cached; treat hit as answered path
                         if trace.generate["outcome"] is None:
                             trace.generate["outcome"] = "answered"
@@ -999,10 +1049,13 @@ def build_rag_chain(
                             response_payload["response_type"] = resp_type
                         elif outcome == "general_guidance":
                             response_payload["response_type"] = "general_guidance"
+                        elif outcome == "canned":
+                            response_payload["response_type"] = "canned"
                         elif no_ctx or llm_refuse or refusal:
                             response_payload["response_type"] = "refused"
                         else:
                             response_payload["response_type"] = "grounded"
+                    response_payload.setdefault("is_canned_response", False)
                 trace.emit()
                 timer.log_summary(logger)
             except Exception:

@@ -526,6 +526,8 @@ async def ask(
                     "no_context",
                     "grounded",
                     "response_type",
+                    "is_canned_response",
+                    "intent",
                 ]:
                     if key in result:
                         minimal_result[key] = result[key]
