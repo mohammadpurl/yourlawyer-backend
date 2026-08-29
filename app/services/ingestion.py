@@ -3,7 +3,6 @@ from typing import Any, Dict, List, Tuple
 import hashlib
 import logging
 import re
-import unicodedata
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -26,6 +25,7 @@ except Exception:
     _HAS_DOCX = False
 
 from app.core.config import CHUNK_SIZE, CHUNK_OVERLAP
+from app.services.text_normalize import normalize_persian_text
 
 logger = logging.getLogger(__name__)
 
@@ -162,16 +162,8 @@ def _make_document(content: str, metadata: Dict[str, Any]) -> Document:
 
 
 def normalize_persian_pdf_text(text: str) -> str:
-    """Collapse Arabic presentation forms / compatibility chars after PDF extract."""
-    if not text:
-        return ""
-    # NFKC: ﻗﺎﻧﻮن → قانون, ي → ي compatibility, etc.
-    t = unicodedata.normalize("NFKC", text)
-    # Common Persian normalization
-    t = t.replace("\u200c", "\u200c")  # keep ZWNJ
-    t = t.replace("ي", "ی").replace("ك", "ک")
-    t = t.replace("\ufeff", "")
-    return t
+    """Backward-compatible alias for PDF extract path (shared normalizer)."""
+    return normalize_persian_text(text)
 
 
 def assess_extracted_text_quality(text: str) -> dict[str, Any]:

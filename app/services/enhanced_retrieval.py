@@ -9,10 +9,14 @@ from langchain_core.documents import Document
 
 from app.services.question_classifier import LegalDomain, taxonomy_to_legacy
 from app.services.vectorstore import get_vectorstore, prefix_query
+from app.services.text_normalize import normalize_persian_text
+from app.services.bm25_index import bm25_search
 from app.core.config import (
     CHROMA_COLLECTION,
     ENABLE_DOMAIN_FILTERED_RETRIEVAL,
     ENABLE_SUBDOMAIN_FILTERED_RETRIEVAL,
+    ENABLE_HYBRID_RETRIEVAL,
+    HYBRID_BM25_K,
 )
 
 logger = logging.getLogger(__name__)
@@ -43,7 +47,7 @@ class EnhancedRetriever:
     ) -> List[Document]:
         """Retrieve with optional taxonomy domain/subdomain filter + fallbacks."""
         # Prefix at the edge of embedding search only (not for classify/logs).
-        query_text = prefix_query(query)
+        query_text = prefix_query(normalize_persian_text(query))
         search_kwargs: Dict[str, Any] = {"k": k}
 
         if (
@@ -91,11 +95,55 @@ class EnhancedRetriever:
             )
             docs = self._safe_invoke(query_text, {"k": k})
 
+        if ENABLE_HYBRID_RETRIEVAL:
+            docs = self._merge_with_bm25(query, docs)
+
         return docs
+
+    @staticmethod
+    def _merge_with_bm25(raw_query: str, dense_docs: List[Document]) -> List[Document]:
+        """Union dense hits with BM25 keyword hits, deduped by content_hash.
+
+        Dense-only search can miss exact-term legal queries entirely (see
+        module docstring in bm25_index.py). BM25 candidates are appended
+        after dense ones so downstream reranking (which re-scores the whole
+        set against the query) decides final ordering, not insertion order.
+        """
+        try:
+            kw_docs = bm25_search(raw_query, k=HYBRID_BM25_K)
+        except Exception as e:
+            logger.warning("BM25 hybrid search failed, dense-only fallback: %s", e)
+            return dense_docs
+
+        if not kw_docs:
+            return dense_docs
+
+        def _key(d: Document) -> str:
+            h = (d.metadata or {}).get("content_hash")
+            return str(h) if h else d.page_content
+
+        seen = {_key(d) for d in dense_docs}
+        merged = list(dense_docs)
+        added = 0
+        for d in kw_docs:
+            k = _key(d)
+            if k in seen:
+                continue
+            seen.add(k)
+            merged.append(d)
+            added += 1
+        if added:
+            logger.info(
+                "Hybrid retrieval: +%s BM25-only chunks merged (dense=%s, total=%s)",
+                added,
+                len(dense_docs),
+                len(merged),
+            )
+        return merged
 
     def _safe_invoke(self, query_text: str, search_kwargs: Dict[str, Any]) -> List[Document]:
         # Defense in depth: ensure E5 query prefix even if caller forgot.
-        query_text = prefix_query(query_text)
+        query_text = prefix_query(normalize_persian_text(query_text))
         try:
             retriever = self.vectorstore.as_retriever(search_kwargs=search_kwargs)
             return list(retriever.invoke(query_text) or [])

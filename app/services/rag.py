@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableLambda
 from langchain_classic.memory import ConversationBufferMemory
 
 from app.services.vectorstore import get_vectorstore, prefix_query
+from app.services.text_normalize import normalize_persian_text
 from app.services.enhanced_retrieval import EnhancedRetriever
 from app.services.question_classifier import get_domain_label
 from app.services.reranker import score_documents, filter_by_min_score
@@ -410,12 +411,14 @@ def build_rag_chain(
                     enhanced_retriever.retrieve_with_classification(anon_question, k=k)
                 )
             elif retriever:
-                docs = retriever.invoke(prefix_query(anon_question))
+                docs = retriever.invoke(prefix_query(normalize_persian_text(anon_question)))
                 domain, confidence = None, 0.0
             else:
                 vs = get_vectorstore()
                 basic_retriever = vs.as_retriever(search_kwargs={"k": k})
-                docs = basic_retriever.invoke(prefix_query(anon_question))
+                docs = basic_retriever.invoke(
+                    prefix_query(normalize_persian_text(anon_question))
+                )
                 domain, confidence = None, 0.0
 
             context = "\n\n".join(d.page_content for d in docs)
@@ -516,7 +519,7 @@ def build_rag_chain(
         elif std_retriever:
             if timer:
                 timer.mark("classify")
-            docs = std_retriever.invoke(prefix_query(question))
+            docs = std_retriever.invoke(prefix_query(normalize_persian_text(question)))
             domain, confidence = None, 0.0
             if timer:
                 timer.mark("retrieve")
@@ -525,7 +528,9 @@ def build_rag_chain(
                 timer.mark("classify")
             vs = get_vectorstore()
             basic_retriever = vs.as_retriever(search_kwargs={"k": retrieve_k})
-            docs = basic_retriever.invoke(prefix_query(question))
+            docs = basic_retriever.invoke(
+                prefix_query(normalize_persian_text(question))
+            )
             domain, confidence = None, 0.0
             if timer:
                 timer.mark("retrieve")

@@ -137,6 +137,18 @@ TAXONOMY_CLASSIFY_MIN_CONFIDENCE = float(
 TAXONOMY_LLM_CLASSIFY = (
     os.getenv("TAXONOMY_LLM_CLASSIFY", "true").lower() == "true"
 )
+
+# Hybrid dense+BM25 retrieval (2026-08-23, evidence-driven): E5 dense search
+# was confirmed (diagnostics on civil-013 "هبه" query) to miss exact legal-term
+# matches entirely — the correct chunk didn't appear even in the top-200 dense
+# results out of 179k chunks, despite existing verbatim in the corpus. BM25
+# keyword search closes that gap for distinctive legal terms/article numbers.
+# Enabled by explicit user request (2026-08-23) ahead of the original
+# unclassified<20% gate — see eval/results/ comparisons before/after.
+ENABLE_HYBRID_RETRIEVAL = (
+    os.getenv("ENABLE_HYBRID_RETRIEVAL", "true").lower() == "true"
+)
+HYBRID_BM25_K = int(os.getenv("HYBRID_BM25_K", "8"))
 # Optional LLM tagging during ingestion (expensive; default off → heuristic only)
 USE_LLM_TAXONOMY_TAGGING = (
     os.getenv("USE_LLM_TAXONOMY_TAGGING", "false").lower() == "true"
