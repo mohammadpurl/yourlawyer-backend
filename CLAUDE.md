@@ -53,13 +53,14 @@ Query
 
 | مشکل | وضعیت | severity |
 |---|---|---|
-| نرمال‌سازی فارسی (NFKC + ی/ک) روی query کاربر اعمال نمی‌شود، فقط روی PDF ingest | باگ فعال | **بحرانی** |
-| نتایج eval در `.gitignore`، هیچ CI gate روی PRهای pipeline نیست | فرآیندی | **بحرانی** |
-| Hybrid dense+BM25 در retrieval | عمداً پیاده نشده (deferred) | متوسط — تا unclassified زیر ۲۰٪ نرود شروع نکن |
-| ~۳۳٪ chunkها `unclassified` (domain) | در حال tagging | متوسط |
-| `ENABLE_DOMAIN_FILTERED_RETRIEVAL=false` | عمدی، تا unclassified کم نشود روشن نشود | — |
+| نرمال‌سازی فارسی (NFKC + ی/ک) روی query کاربر اعمال نمی‌شود، فقط روی PDF ingest | ✅ رفع شد (۲۰۲۶-۰۸-۲۳، `text_normalize.py` مشترک بین ingest و query) | — |
+| نتایج eval در `.gitignore`، هیچ CI gate روی PRهای pipeline نیست | فرآیندی، هنوز رفع نشده (`baseline_locked.json` هم gitignore است) | **بحرانی** |
+| Hybrid dense+BM25 در retrieval | ✅ پیاده و فعال شد (۲۰۲۶-۰۸-۲۳، `ENABLE_HYBRID_RETRIEVAL=true`) — قبل از رسیدن unclassified به زیر ۲۰٪ به‌درخواست صریح کاربر، چون evidence نشان داد dense-only حتی در top-200 هم چانک درست را برای اصطلاحات خاص (مثل «هبه») پیدا نمی‌کرد | — |
+| ~۳۳٪ chunkها `unclassified` (domain) | ✅ به ۱۹.۳۳٪ رسید (۲۰۲۶-۰۸-۲۳، باگ نرمال‌سازی آ/ئ در الگوهای `domain_law_map.py` رفع شد + ~۲۰ قاعده جدید) — `scripts/backfill_domain_tags.py` روی corpus واقعی اجرا شد | کم — زیر آستانه ۲۰٪ |
+| `ENABLE_DOMAIN_FILTERED_RETRIEVAL=false` | همچنان عمدی خاموش — کاهش unclassified این فلگ را خودکار روشن نکرد؛ روشن‌کردنش هنوز نیاز به درخواست صریح کاربر دارد | — |
 | Fallback extractive وقتی هیچ LLM تنظیم نشده | fail-open (dump خام context) به‌جای fail-closed | متوسط |
 | `ENABLE_GENERAL_GUIDANCE_FALLBACK=false` | عمدی، منتظر review دستی نمونه‌ها | کم |
+| intent_detector «meta_capability» سؤالات درباره مفهوم سند را با درخواست تنظیم سند اشتباه می‌گرفت | ✅ رفع شد (۲۰۲۶-۰۸-۲۳، prompt دقیق‌تر شد) | — |
 
 ## قوانین کاری برای Claude Code در این ریپو
 
