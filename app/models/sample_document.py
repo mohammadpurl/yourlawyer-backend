@@ -38,6 +38,12 @@ class SampleDocument(Base):
     source_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     # Relative to project data/ root, e.g. outputs_solh_contracts/10_....pdf
     file_path: Mapped[str] = mapped_column(String(1000), nullable=False)
+    # Optional manual overrides for <title>/meta description, used when the
+    # generated (title + category template) text doesn't match how users
+    # actually search for this document (see GSC query data). NULL = fall
+    # back to the auto-generated title/teaser.
+    seo_title: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    seo_description: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, server_default="true", index=True
     )

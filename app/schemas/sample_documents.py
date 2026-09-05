@@ -40,6 +40,10 @@ class SampleDocumentSummary(BaseModel):
 class SampleDocumentDetail(SampleDocumentSummary):
     teaser: str = ""
     disclaimer: str = DISCLAIMER_FA
+    # Manual SEO overrides (see SampleDocument.seo_title/seo_description).
+    # None means "no override, use the generated title/teaser".
+    seo_title: Optional[str] = None
+    seo_description: Optional[str] = None
 
 
 class SampleDocumentListResponse(BaseModel):

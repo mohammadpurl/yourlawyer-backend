@@ -135,6 +135,25 @@ def _ensure_runtime_schema() -> None:
     except Exception:
         logger.exception("Failed to ensure users.is_admin / avatar_path columns")
 
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text(
+                    "ALTER TABLE sample_documents "
+                    "ADD COLUMN IF NOT EXISTS seo_title VARCHAR(300)"
+                )
+            )
+            conn.execute(
+                text(
+                    "ALTER TABLE sample_documents "
+                    "ADD COLUMN IF NOT EXISTS seo_description VARCHAR(500)"
+                )
+            )
+    except Exception:
+        logger.exception(
+            "Failed to ensure sample_documents.seo_title / seo_description columns"
+        )
+
 
 app = FastAPI(
     title="YourLawyer RAG (IR)",

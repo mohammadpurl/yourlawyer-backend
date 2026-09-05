@@ -26,6 +26,7 @@ wheels/
 storage/query_traces.jsonl
 eval/results/*.json
 !eval/results/.gitkeep
+!eval/results/baseline_locked.json
 eval/results/*.html
 eval/results/relevance_scores_for_labeling.jsonl
 

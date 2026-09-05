@@ -105,6 +105,8 @@ def get_sample_document(sample_id: int, db: Session = Depends(get_db)):
         has_file=True,
         teaser=teaser,
         disclaimer=DISCLAIMER_FA,
+        seo_title=getattr(row, "seo_title", None),
+        seo_description=getattr(row, "seo_description", None),
         created_at=getattr(row, "created_at", None),
         updated_at=getattr(row, "updated_at", None),
     )

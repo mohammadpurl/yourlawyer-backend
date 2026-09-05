@@ -122,7 +122,14 @@ RERANKER_MODEL = os.getenv(
 MIN_SOURCE_RELEVANCE_SCORE = float(os.getenv("MIN_SOURCE_RELEVANCE_SCORE", "0.15"))
 
 # Hierarchical taxonomy classify → Chroma metadata filter.
-# Default off until corpus is re-tagged with domain/subdomain metadata.
+# Tried 2026-08-23 after domain-tag backfill brought unclassified from 33.3%
+# to 19.33% (under the project's 20% gate for trying this). Measured net
+# regression on the 120-question eval (answered 92->90, avg confidence
+# 0.858->0.848, 2 questions lost their answer entirely) — domain tags are
+# assigned at law/chunk granularity from law_name patterns, not per-passage
+# topic, so restricting to same-domain chunks loses cross-document recall
+# even when the classifier itself is correct. Rolled back to off; see
+# eval/results/run_1787997358.json (domain filter ON) vs baseline_locked.json.
 ENABLE_DOMAIN_FILTERED_RETRIEVAL = (
     os.getenv("ENABLE_DOMAIN_FILTERED_RETRIEVAL", "false").lower() == "true"
 )
